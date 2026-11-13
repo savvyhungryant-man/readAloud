@@ -90,6 +90,12 @@
     background: #eee;
   }
   progress { width: 100%; height: 14px; margin-top: 12px; display: none; }
+  /* 앱 안 카메라 */
+  #liveBox { display: none; margin-bottom: 12px; }
+  #liveVideo { width: 100%; max-height: 55vh; object-fit: contain; background: #000; border-radius: 12px; display: block; }
+  .shot-btn  { background: var(--primary); }
+  .live-btn  { background: #fff; color: var(--camera); border: 2px solid var(--camera); font-size: 18px; padding: 14px 0; margin-bottom: 12px; }
+  .live-off  { background: #fff; color: #888; border: 2px solid #bbb; font-size: 16px; flex: 0 0 28%; }
 
   /* ===== 문장 보기 ===== */
   #reader { font-size: 24px; line-height: 1.8; }
@@ -142,6 +148,15 @@
 
   <!-- ===== 사진 찍기 ===== -->
   <div class="card">
+    <!-- 앱 안 카메라: 미리보기를 띄워 두고 버튼 한 번으로 찍고 바로 읽기 -->
+    <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
+    <div id="liveBox">
+      <video id="liveVideo" playsinline muted autoplay></video>
+      <div class="buttons" style="margin-top:10px">
+        <button class="big-btn shot-btn" id="btnShot">📸 찍고 읽기</button>
+        <button class="big-btn live-off" id="btnLiveOff">끄기</button>
+      </div>
+    </div>
     <div class="buttons">
       <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
       <label class="big-btn album-btn"  id="lblAlbum"  for="fileAlbum">🖼 앨범</label>
@@ -988,6 +1003,7 @@ function setBusy(b) {
   busy = b;
   $lblCamera.classList.toggle('disabled', b);
   $lblAlbum.classList.toggle('disabled', b);
+  document.getElementById('btnShot').classList.toggle('disabled', b);
   $ocrProgress.style.display = b ? 'block' : 'none';
 }
 
@@ -1034,15 +1050,21 @@ async function handleFile(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
   if (!file || busy) return;
+  await recognizeAndRead(() => prepareImage(file));
+}
 
+// 공용: 사진(canvas) 준비 → 글자 인식 → 문장 보기 → (기기 음성·Piper면) 바로 읽기
+async function recognizeAndRead(getCanvas, { showPreview = true } = {}) {
   stopReading(true);
   setBusy(true);
   $ocrProgress.removeAttribute('value');   // 진행률 대신 "작업 중" 막대
   try {
     setOcrStatus('사진 준비 중…');
-    const canvas = await prepareImage(file);
-    $preview.src = canvas.toDataURL('image/jpeg', 0.7);
-    $preview.style.display = 'block';
+    const canvas = await getCanvas();
+    if (showPreview) {
+      $preview.src = canvas.toDataURL('image/jpeg', 0.7);
+      $preview.style.display = 'block';
+    }
 
     setOcrStatus('글자 인식 엔진 준비 중… (처음 한 번만 오래 걸려요)');
     const { mod, ocr } = await getOcr();
@@ -1091,6 +1113,84 @@ function primeAutoRead() {
 }
 $lblCamera.addEventListener('click', primeAutoRead);
 $lblAlbum.addEventListener('click', primeAutoRead);
+
+// ---------------------------------------------------------------------
+//  앱 안 카메라 – iPhone 카메라 화면의 "사진 사용" 확인 없이, 버튼 한 번으로 찍고 바로 읽기
+// ---------------------------------------------------------------------
+const $liveVideo = document.getElementById('liveVideo');
+const $liveBox   = document.getElementById('liveBox');
+const $btnLiveOn = document.getElementById('btnLiveOn');
+let liveStream = null;
+
+async function startLive() {
+  primeAutoRead();                       // 버튼 누른 순간 → 소리 허용도 같이 받아 둠
+  if (liveStream) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setOcrStatus('⚠️ 이 브라우저는 앱 안 카메라를 지원하지 않아요. 📷 사진 찍기를 써 주세요.');
+    return;
+  }
+  try {
+    setOcrStatus('카메라 켜는 중…');
+    liveStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+    });
+    $liveVideo.srcObject = liveStream;
+    await $liveVideo.play().catch(() => {});
+    $liveBox.style.display = 'block';
+    $btnLiveOn.style.display = 'none';
+    $preview.style.display = 'none';
+    const t = liveStream.getVideoTracks()[0];
+    const st = t.getSettings ? t.getSettings() : {};
+    log(`앱 안 카메라 켬: ${st.width || '?'}x${st.height || '?'}`);
+    t.addEventListener('ended', () => stopLive('카메라가 꺼졌어요. 다시 켜 주세요.'));
+    setOcrStatus('책 페이지를 화면에 맞추고 📸 찍고 읽기를 누르세요.');
+    save('liveCam', '1');
+  } catch (e) {
+    liveStream = null;
+    const why = e.name === 'NotAllowedError' ? '카메라 사용이 허용되지 않았어요. Safari 설정에서 카메라를 허용해 주세요.' : e.message;
+    setOcrStatus(`⚠️ ${why}`);
+    log(`카메라 오류: ${e.name} ${e.message}`);
+  }
+}
+
+function stopLive(msg) {
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null;
+  $liveVideo.srcObject = null;
+  $liveBox.style.display = 'none';
+  $btnLiveOn.style.display = '';
+  if (msg) setOcrStatus(msg);
+}
+
+// 지금 카메라 화면을 그대로 한 장으로 캡처 (긴 변 2000px로 줄임)
+function grabFrame() {
+  const w = $liveVideo.videoWidth, h = $liveVideo.videoHeight;
+  if (!w || !h) throw new Error('카메라 화면이 아직 준비되지 않았어요');
+  const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  canvas.getContext('2d').drawImage($liveVideo, 0, 0, canvas.width, canvas.height);
+  log(`카메라 캡처: ${w}x${h} → ${canvas.width}x${canvas.height}`);
+  return canvas;
+}
+
+$btnLiveOn.addEventListener('click', startLive);
+document.getElementById('btnLiveOff').addEventListener('click', () => { stopLive('책 페이지를 찍어 주세요.'); save('liveCam', '0'); });
+document.getElementById('btnShot').addEventListener('click', () => {
+  if (busy) return;
+  primeAutoRead();                       // 누른 순간 소리 허용
+  recognizeAndRead(async () => grabFrame(), { showPreview: false });
+});
+// 다른 앱에 갔다 오면 iPhone이 카메라를 끄므로, 돌아왔을 때 꺼져 있으면 안내
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && liveStream &&
+      liveStream.getVideoTracks().every(t => t.readyState === 'ended')) stopLive('카메라가 꺼졌어요. 다시 켜 주세요.');
+});
+
+// 지난번에 카메라를 켜 둔 채 썼으면 열자마자 다시 켬 (아이가 버튼을 찾을 필요 없게)
+if (load('liveCam') === '1') startLive();
 
 document.getElementById('fileCamera').addEventListener('change', handleFile);
 document.getElementById('fileAlbum').addEventListener('change', handleFile);
