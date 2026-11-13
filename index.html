@@ -278,7 +278,8 @@ const $preview     = document.getElementById('preview');
 const $lblCamera   = document.getElementById('lblCamera');
 const $lblAlbum    = document.getElementById('lblAlbum');
 
-const MAX_SIDE = 2000;   // 사진 긴 변을 이 크기로 줄임 (폰 사진은 4000px 이상이라 느리고 메모리 부족 위험)
+const MAX_SIDE = 3000;   // 사진 긴 변을 이 크기로 줄임 (작은 글씨도 읽히게 하되, iPhone 메모리 한도는 넘지 않게)
+const MIN_LINE_CONF = 60; // 이 신뢰도(%) 미만인 줄은 그림·뒷면 비침 등 잡음으로 보고 버림
 let ocrWorker = null;    // Tesseract 작업자. 처음 한 번만 만들고 계속 재사용
 let busy = false;
 
@@ -350,7 +351,31 @@ function prepareImage(file) {
   });
 }
 
-// (3) 사진 선택되면 실행되는 전체 흐름
+// (3) 잡음 줄 걸러내기: 신뢰도가 낮거나 글자보다 기호가 많은 줄은 버림
+function filterLines(data) {
+  if (!data.blocks) return data.text.trim();          // 혹시 줄 정보가 없으면 원문 그대로
+  const paragraphs = [];
+  let dropped = 0;
+  for (const block of data.blocks) {
+    for (const para of block.paragraphs) {
+      const kept = [];
+      for (const line of para.lines) {
+        const t = line.text.trim();
+        if (!t) continue;
+        const chars   = t.replace(/\s/g, '').length;
+        const letters = (t.match(/[A-Za-z]/g) || []).length;
+        const ok = line.confidence >= MIN_LINE_CONF && letters / chars >= 0.5;
+        if (ok) kept.push(t);
+        else { dropped++; log(`버린 줄 (${Math.round(line.confidence)}%): ${t}`); }
+      }
+      if (kept.length) paragraphs.push(kept.join('\n'));
+    }
+  }
+  log(`줄 필터: ${dropped}줄 버림`);
+  return paragraphs.join('\n\n');
+}
+
+// (4) 사진 선택되면 실행되는 전체 흐름
 async function handleFile(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';                 // 같은 사진을 다시 골라도 동작하도록 초기화
@@ -367,10 +392,11 @@ async function handleFile(e) {
 
     const worker = await getWorker();
     const t0 = performance.now();
-    const { data } = await worker.recognize(canvas);
+    // blocks: true → 문단/줄 단위 결과와 줄별 신뢰도까지 받음
+    const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
     const sec = ((performance.now() - t0) / 1000).toFixed(1);
 
-    const text = data.text.trim();
+    const text = filterLines(data);
     log(`인식 완료: ${sec}초, 신뢰도 ${Math.round(data.confidence)}%, ${text.length}자`);
     if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
