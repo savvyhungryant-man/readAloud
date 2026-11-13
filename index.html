@@ -279,6 +279,9 @@ function loadVoices() {
   const all = synth.getVoices();
   if (all.length === 0) return false;
 
+  // 진단용: 기기가 알려준 음성 전체 (필터 전)
+  log(`[전체 음성 ${all.length}개] ` + all.map(v => `${v.name}/${v.lang}${/premium|enhanced/i.test(v.voiceURI) ? '/' + (/premium/i.test(v.voiceURI) ? 'P' : 'E') : ''}`).join(', '));
+
   const seen = new Set();
   englishVoices = all.filter(v => {
     if (!isEnglish(v) || isNovelty(v) || seen.has(v.voiceURI)) return false;
