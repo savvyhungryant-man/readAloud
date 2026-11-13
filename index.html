@@ -553,6 +553,7 @@ audio.preload = 'auto';
 let audioUnlocked = false;
 let audioDone = null;                 // 지금 재생 중인 문장이 끝났을 때 부를 함수
 const aiCache = new Map();            // "음성|문장" → mp3 주소(Promise). 같은 문장 다시 읽을 때 재사용
+const PREFETCH = 3;                   // 재생하는 동안 몇 문장 앞까지 미리 받아 둘지
 
 // --- 음성 종류 선택 (기기 / AI)
 let engine = load('engine') === 'ai' ? 'ai' : 'device';
@@ -815,7 +816,9 @@ async function aiSpeakList(indices) {
       return;
     }
     if (my !== session) return;                                   // 그 사이 정지/다른 문장 선택됨
-    if (k + 1 < indices.length) fetchAudio(sentences[indices[k + 1]].text).catch(() => {});  // 다음 문장 미리 받기
+    // 다음 3문장 미리 받기 (짧은 문장은 재생이 1초 안팎이라, 1문장만 미리 받으면 받는 시간 2초를 못 가림)
+    for (let j = k + 1; j < Math.min(k + 1 + PREFETCH, indices.length); j++)
+      fetchAudio(sentences[indices[j]].text).catch(() => {});
 
     highlight(i);
     setStatus(`🔊 읽는 중… (${i + 1} / ${sentences.length})`);
