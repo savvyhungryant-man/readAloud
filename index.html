@@ -181,8 +181,8 @@
     <label>음성 종류</label>
     <div class="seg">
       <button id="engDevice" data-engine="device">📱 기기 음성</button>
-      <button id="engAi"     data-engine="ai">✨ AI 음성</button>
       <button id="engPiper"  data-engine="piper">🆓 Piper</button>
+      <button id="engAi"     data-engine="ai">✨ AI 음성</button>
     </div>
 
     <div id="deviceBox">
@@ -1059,7 +1059,14 @@ async function handleFile(e) {
     } else {
       $text.value = text;
       renderSentences();
-      setOcrStatus(`✅ 인식 완료 (${sec}초) – ▶ 읽기를 누르세요`);
+      if (engine === 'ai') {
+        setOcrStatus(`✅ 인식 완료 (${sec}초) – ▶ 읽기를 누르세요`);
+      } else {
+        // 찍으면 바로 읽기: 사진 버튼을 누를 때 소리 허용을 미리 받아 둠 (primeAutoRead)
+        setOcrStatus(`✅ 인식 완료 (${sec}초) – 읽기 시작`);
+        log('자동 읽기 시작');
+        speakAll();
+      }
     }
   } catch (err) {
     setOcrStatus(`⚠️ 오류: ${err.message}`);
@@ -1068,6 +1075,22 @@ async function handleFile(e) {
     setBusy(false);
   }
 }
+
+// 찍으면 바로 읽기 (기기 음성 / Piper만):
+// iPhone은 화면을 누른 순간에만 소리를 처음 낼 수 있게 허용 → 사진 버튼을 누르는 순간 소리 허용을 받아 둠.
+//  - Piper: 재생기(audio)로 아주 짧은 무음 재생  - 기기 음성: 소리 없는 빈 문장 읽기
+function primeAutoRead() {
+  if (engine === 'piper') {
+    unlockAudio();
+    preparePiper();
+  } else if (engine === 'device' && synth) {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    synth.speak(u);
+  }
+}
+$lblCamera.addEventListener('click', primeAutoRead);
+$lblAlbum.addEventListener('click', primeAutoRead);
 
 document.getElementById('fileCamera').addEventListener('change', handleFile);
 document.getElementById('fileAlbum').addEventListener('change', handleFile);
