@@ -13,9 +13,13 @@ const INSTRUCTIONS =
 // 말하는 빠르기 (앱의 속도 슬라이더에 따라 3단계)
 const PACE = {
   normal:    '',
-  slow:      ' Speak a little more slowly than usual, with short pauses between phrases.',
-  very_slow: ' Speak slowly and very clearly, like reading to a beginner reader, with short pauses between phrases.',
+  slow:      ' Speak noticeably more slowly than normal conversation, about 85% of your usual speed. ' +
+             'Keep this slower pace from the first word to the very last word. Do not speed up.',
+  very_slow: ' Speak slowly and very clearly, about 70% of your usual speed, like reading to a beginner reader, ' +
+             'with short pauses between phrases. Keep this slow pace from the first word to the very last word. Do not speed up.',
 };
+// 실험: OpenAI의 speed 값도 함께 보냄 (모델이 지원하지 않으면 무시되거나 오류 → 앱 디버그 로그에 표시됨)
+const SPEED = { normal: 1.0, slow: 0.85, very_slow: 0.7 };
 
 function cors(origin) {
   return {
@@ -68,7 +72,11 @@ export default {
     const r = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, input: text, voice, instructions: INSTRUCTIONS + PACE[pace], response_format: 'mp3' }),
+      body: JSON.stringify({
+        model: MODEL, input: text, voice, response_format: 'mp3',
+        instructions: INSTRUCTIONS + PACE[pace],
+        ...(pace !== 'normal' ? { speed: SPEED[pace] } : {}),
+      }),
     });
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 300);
