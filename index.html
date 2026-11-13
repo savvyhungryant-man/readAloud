@@ -226,8 +226,8 @@
   </details>
 </main>
 
-<!-- Tesseract.js (브라우저 안에서 OCR). 이미지는 밖으로 보내지 않음 -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js"></script>
+<!-- ONNX Runtime (브라우저 안에서 PaddleOCR 모델 실행). 사진은 밖으로 보내지 않음 -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.wasm.min.js"></script>
 
 <script>
 // ===== 0. 화면 요소 참조 / 공통 함수 =====
@@ -855,7 +855,8 @@ document.getElementById('aiTest').addEventListener('click', async () => {
 setEngine(engine);
 
 // =====================================================================
-//  E. 사진 → 글자 인식 (2단계)
+//  E. 사진 → 글자 인식 – PaddleOCR (paddle-ocr.js)
+//     ① 글자 줄 위치 찾기 → ② 줄마다 반듯하게 잘라 읽기. 휘거나 기운 책 사진에 강함
 // =====================================================================
 const $ocrStatus   = document.getElementById('ocrStatus');
 const $ocrProgress = document.getElementById('ocrProgress');
@@ -863,9 +864,9 @@ const $preview     = document.getElementById('preview');
 const $lblCamera   = document.getElementById('lblCamera');
 const $lblAlbum    = document.getElementById('lblAlbum');
 
-const MAX_SIDE = 3000;    // 사진 긴 변을 이 크기로 줄임 (작은 글씨도 읽히게 하되, iPhone 메모리 한도는 넘지 않게)
-const MIN_LINE_CONF = 60; // 이 신뢰도(%) 미만인 줄은 그림·뒷면 비침 등 잡음으로 보고 버림
-let ocrWorker = null;
+const MAX_SIDE  = 2000;   // 사진 긴 변을 이 크기로 줄여서 인식 (이보다 크면 느려지기만 함)
+const MIN_SCORE = 0.6;    // 이 확신도 미만인 줄은 그림·옆 페이지 조각 등으로 보고 버림
+let ocrPromise = null;    // 엔진 준비 (한 번만)
 let busy = false;
 
 function setOcrStatus(msg) { $ocrStatus.textContent = msg; }
@@ -876,116 +877,43 @@ function setBusy(b) {
   $ocrProgress.style.display = b ? 'block' : 'none';
 }
 
-async function getWorker() {
-  if (ocrWorker) return ocrWorker;
-  if (typeof Tesseract === 'undefined') throw new Error('Tesseract.js를 불러오지 못했습니다 (인터넷 연결 확인)');
-  setOcrStatus('글자 인식 엔진 준비 중… (처음 한 번만 오래 걸려요)');
-  const t0 = performance.now();
-  ocrWorker = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() =>
-      reject(new Error('엔진 다운로드 시간 초과 – 인터넷 확인 후 다시 찍어 주세요')), 90000);
-    Tesseract.createWorker('eng', 1, {
-      logger: m => {
-        if (typeof m.progress === 'number') $ocrProgress.value = Math.round(m.progress * 100);
-        if (m.status === 'recognizing text') {
-          setOcrStatus(`글자 읽는 중… ${Math.round(m.progress * 100)}%`);
-        }
-      },
-      errorHandler: err => { clearTimeout(timer); reject(new Error('엔진 준비 실패: ' + err)); }
-    }).then(
-      w   => { clearTimeout(timer); resolve(w); },
-      err => { clearTimeout(timer); reject(err); }
-    );
-  });
-  log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
-  return ocrWorker;
+// 엔진 준비: 페이지를 열자마자 미리 시작 → 첫 사진을 찍을 때쯤엔 대부분 끝나 있음
+function getOcr() {
+  if (!ocrPromise) {
+    ocrPromise = (async () => {
+      if (typeof ort === 'undefined') throw new Error('인식 엔진을 불러오지 못했습니다 (인터넷 연결 확인)');
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
+      ort.env.wasm.numThreads = 1;      // GitHub Pages에서는 다중 스레드를 못 씀
+      const t0 = performance.now();
+      const mod = await import('./paddle-ocr.js?v=1');
+      const ocr = await mod.createOcr(ort, { onProgress: m => { if (!busy) setOcrStatus(m); } });
+      log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
+      if (!busy) setOcrStatus('책 페이지를 찍어 주세요.');
+      return { mod, ocr };
+    })();
+    ocrPromise.catch(e => { ocrPromise = null; log(`OCR 엔진 준비 실패: ${e.message}`); setOcrStatus(`⚠️ ${e.message}`); });
+  }
+  return ocrPromise;
 }
 
+// 사진을 긴 변 2000px로 줄여 픽셀 데이터로 (컬러 그대로 – 이 엔진은 컬러 사진으로 학습됨)
 function prepareImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.round(img.naturalWidth * scale);
-      const h = Math.round(img.naturalHeight * scale);
       const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-
-      const data = ctx.getImageData(0, 0, w, h);
-      const px = data.data;
-      for (let i = 0; i < px.length; i += 4) {
-        const g = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-        px[i] = px[i + 1] = px[i + 2] = g;
-      }
-      ctx.putImageData(data, 0, 0);
-
+      canvas.width  = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
-      log(`사진 크기: ${img.naturalWidth}x${img.naturalHeight} → ${w}x${h}`);
+      log(`사진 크기: ${img.naturalWidth}x${img.naturalHeight} → ${canvas.width}x${canvas.height}`);
       resolve(canvas);
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('사진을 열 수 없습니다')); };
     img.src = url;
   });
-}
-
-function median(arr) {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a, b) => a - b);
-  return s[Math.floor(s.length / 2)];
-}
-
-// 줄 정리:
-//  ① 본문 칸 바깥(왼쪽·오른쪽 여백)에 붙은 잡글자 제거 – 옆 페이지 글씨, 책 가장자리 그림자 등
-//  ② 신뢰도가 낮거나 글자보다 기호가 많은 줄은 버림
-//  결과: 줄마다 한 줄씩, 엔진이 문단 시작이라고 본 곳 앞에는 빈 줄
-function filterLines(data) {
-  if (!data.blocks) return data.text.trim();
-
-  const lines = [];
-  for (const block of data.blocks)
-    for (const para of block.paragraphs)
-      para.lines.forEach((line, k) => { if (line.words.length) lines.push({ line, paraStart: k === 0 }); });
-
-  // 본문 칸의 왼쪽/오른쪽 경계 = 확실한 단어(신뢰도 80↑, 3글자↑)들의 줄 시작·끝 위치의 중앙값
-  const good = w => w.confidence >= 80 && /[A-Za-z]{3}/.test(w.text);
-  const lefts = [], rights = [];
-  for (const { line } of lines) {
-    const g = line.words.filter(good);
-    if (g.length) { lefts.push(g[0].bbox.x0); rights.push(g[g.length - 1].bbox.x1); }
-  }
-  const leftEdge = median(lefts), rightEdge = median(rights);
-
-  const out = [];
-  let dropped = 0;
-  for (const { line, paraStart } of lines) {
-    const h = line.bbox.y1 - line.bbox.y0;
-    let words = [...line.words];
-    // 본문 칸보다 완전히 바깥에 있고, 본문과 크게 떨어져 있는 단어 무리는 잡글자
-    let a = 0;
-    while (a < words.length && words[a].bbox.x1 < leftEdge - 0.3 * h) a++;
-    if (a > 0 && a < words.length && words[a].bbox.x0 - words[a - 1].bbox.x1 > 0.4 * h) words = words.slice(a);
-    let b = words.length;
-    while (b > 0 && words[b - 1].bbox.x0 > rightEdge + 0.3 * h) b--;
-    if (b > 0 && b < words.length && words[b].bbox.x0 - words[b - 1].bbox.x1 > 0.4 * h) words = words.slice(0, b);
-    if (!words.length) continue;
-
-    const t = words.map(w => w.text).join(' ');
-    const conf = words.reduce((s, w) => s + w.confidence, 0) / words.length;
-    const chars   = t.replace(/\s/g, '').length;
-    const letters = (t.match(/[A-Za-z]/g) || []).length;
-    if (conf >= MIN_LINE_CONF && letters / chars >= 0.5) {
-      if (paraStart && out.length) out.push('');
-      out.push(t);
-    } else {
-      dropped++;
-      log(`버린 줄 (${Math.round(conf)}%): ${t}`);
-    }
-  }
-  log(`줄 필터: ${dropped}줄 버림`);
-  return out.join('\n');
 }
 
 async function handleFile(e) {
@@ -995,26 +923,29 @@ async function handleFile(e) {
 
   stopReading(true);
   setBusy(true);
-  $ocrProgress.value = 0;
+  $ocrProgress.removeAttribute('value');   // 진행률 대신 "작업 중" 막대
   try {
     setOcrStatus('사진 준비 중…');
     const canvas = await prepareImage(file);
     $preview.src = canvas.toDataURL('image/jpeg', 0.7);
     $preview.style.display = 'block';
 
-    const worker = await getWorker();
-    const t0 = performance.now();
-    const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
-    const sec = ((performance.now() - t0) / 1000).toFixed(1);
+    setOcrStatus('글자 인식 엔진 준비 중… (처음 한 번만 오래 걸려요)');
+    const { mod, ocr } = await getOcr();
+    setOcrStatus('글자 읽는 중…');
+    await new Promise(r => setTimeout(r, 50));   // 상태 문구가 화면에 그려지도록 잠깐 양보
+    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    const r = await mod.recognize(ocr, data, { minScore: MIN_SCORE });
+    const sec = ((r.detMs + r.recMs) / 1000).toFixed(1);
 
-    const text = cleanText(filterLines(data));   // ← 3단계: 인식 결과 정리
-    log(`인식 완료: ${sec}초, 신뢰도 ${Math.round(data.confidence)}%, ${text.length}자`);
+    const text = cleanText(mod.linesToText(r.lines));   // 머리글·쪽번호 제거, 끊긴 줄 합치기
+    log(`인식 완료: ${sec}초 (찾기 ${(r.detMs / 1000).toFixed(1)} + 읽기 ${(r.recMs / 1000).toFixed(1)}), ${r.lines.length}줄, ${text.length}자`);
     if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
     } else {
       $text.value = text;
       renderSentences();
-      setOcrStatus(`✅ 인식 완료 (${sec}초, 정확도 약 ${Math.round(data.confidence)}%) – ▶ 읽기를 누르세요`);
+      setOcrStatus(`✅ 인식 완료 (${sec}초) – ▶ 읽기를 누르세요`);
     }
   } catch (err) {
     setOcrStatus(`⚠️ 오류: ${err.message}`);
@@ -1026,6 +957,7 @@ async function handleFile(e) {
 
 document.getElementById('fileCamera').addEventListener('change', handleFile);
 document.getElementById('fileAlbum').addEventListener('change', handleFile);
+getOcr();   // 페이지 열자마자 엔진 준비 시작
 
 // =====================================================================
 //  G. 단축어에서 넘어온 글 받기
