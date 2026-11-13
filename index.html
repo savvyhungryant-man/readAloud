@@ -117,6 +117,21 @@
     padding: 8px;
     border-radius: 8px;
   }
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg button {
+    flex: 1; font-size: 18px; font-weight: 700; padding: 14px 0;
+    border-radius: 12px; border: 2px solid var(--camera); background: #fff; color: var(--camera);
+    touch-action: manipulation;
+  }
+  .seg button.on { background: var(--camera); color: #fff; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row input {
+    flex: 1; min-width: 0; font-size: 18px; padding: 12px; border-radius: 12px; border: 1px solid var(--border);
+  }
+  .row button {
+    font-size: 16px; font-weight: 700; padding: 0 16px; border-radius: 12px; border: none; white-space: nowrap;
+    background: var(--primary); color: #fff; touch-action: manipulation;
+  }
   details summary { cursor: pointer; color: var(--muted); }
   details[open] summary { margin-bottom: 12px; }
 </style>
@@ -163,8 +178,36 @@
   </details>
 
   <div class="card">
-    <label for="voice">음성 선택</label>
-    <select id="voice"><option>음성 불러오는 중…</option></select>
+    <label>음성 종류</label>
+    <div class="seg">
+      <button id="engDevice" data-engine="device">📱 기기 음성</button>
+      <button id="engAi"     data-engine="ai">✨ AI 음성</button>
+    </div>
+
+    <div id="deviceBox">
+      <select id="voice"><option>음성 불러오는 중…</option></select>
+    </div>
+
+    <div id="aiBox" style="display:none">
+      <select id="aiVoice">
+        <option value="coral">Coral (여성, 따뜻함) – 추천</option>
+        <option value="nova">Nova (여성, 밝음)</option>
+        <option value="shimmer">Shimmer (여성, 부드러움)</option>
+        <option value="sage">Sage (여성, 차분함)</option>
+        <option value="fable">Fable (영국식, 이야기꾼)</option>
+        <option value="ballad">Ballad (남성, 부드러움)</option>
+        <option value="alloy">Alloy (중성)</option>
+        <option value="ash">Ash (남성)</option>
+        <option value="echo">Echo (남성)</option>
+        <option value="onyx">Onyx (남성, 낮음)</option>
+        <option value="verse">Verse (남성, 표현력)</option>
+      </select>
+      <div class="row">
+        <input id="aiPassword" type="password" placeholder="비밀번호" autocomplete="current-password">
+        <button id="aiTest">🔊 들어보기</button>
+      </div>
+      <div class="hint" style="margin-top:8px">비밀번호는 이 기기에만 저장돼요. 한 번 읽은 문장은 다시 읽어도 요금이 들지 않아요(앱을 닫기 전까지).</div>
+    </div>
   </div>
 
   <div class="card">
@@ -420,9 +463,16 @@ function makeUtterance(text) {
   return u;
 }
 
-// 여러 문장을 탭한 순간 한꺼번에 대기열에 넣음 → iOS의 "사용자 탭으로만 재생" 제약을 한 번에 통과
+// 읽기 진입점: 선택한 음성 종류에 따라 기기 음성 / AI 음성으로 나눔
 function speakList(indices) {
-  if (!synth || !indices.length) return;
+  if (!indices.length) return;
+  if (engine === 'ai') aiSpeakList(indices);
+  else                 deviceSpeakList(indices);
+}
+
+// [기기 음성] 여러 문장을 탭한 순간 한꺼번에 대기열에 넣음 → iOS의 "사용자 탭으로만 재생" 제약을 한 번에 통과
+function deviceSpeakList(indices) {
+  if (!synth) return;
   synth.cancel();
   const my = ++session;
   liveUtts = [];
@@ -461,6 +511,7 @@ function speakAll() {
 function stopReading(silent) {
   session++;
   if (synth) synth.cancel();
+  stopAudio();
   highlight(-1);
   if (!silent) { setStatus('⏹ 정지했어요'); log('정지'); }
 }
@@ -468,6 +519,156 @@ function stopReading(silent) {
 document.getElementById('btnSpeak').addEventListener('click', speakAll);
 document.getElementById('btnStop').addEventListener('click', () => stopReading(false));
 $text.addEventListener('input', renderSentences);     // 글을 고치면 문장 보기 갱신
+
+// =====================================================================
+//  F. AI 음성 (4단계) – Cloudflare 프록시 → OpenAI TTS
+// =====================================================================
+const PROXY_URL   = 'https://readaloud-tts.smurpot.workers.dev';
+const $aiVoice    = document.getElementById('aiVoice');
+const $aiPassword = document.getElementById('aiPassword');
+const audio       = new Audio();      // AI 음성 재생기. 하나만 만들어 계속 재사용 (iOS 재생 허용이 이 객체에 붙음)
+audio.preload = 'auto';
+let audioUnlocked = false;
+let audioDone = null;                 // 지금 재생 중인 문장이 끝났을 때 부를 함수
+const aiCache = new Map();            // "음성|문장" → mp3 주소(Promise). 같은 문장 다시 읽을 때 재사용
+
+// --- 음성 종류 선택 (기기 / AI)
+let engine = load('engine') === 'ai' ? 'ai' : 'device';
+function setEngine(e) {
+  engine = e;
+  save('engine', e);
+  document.getElementById('engDevice').classList.toggle('on', e === 'device');
+  document.getElementById('engAi').classList.toggle('on', e === 'ai');
+  document.getElementById('deviceBox').style.display = e === 'device' ? '' : 'none';
+  document.getElementById('aiBox').style.display     = e === 'ai'     ? '' : 'none';
+  stopReading(true);
+}
+document.getElementById('engDevice').addEventListener('click', () => setEngine('device'));
+document.getElementById('engAi').addEventListener('click', () => setEngine('ai'));
+
+$aiVoice.value    = load('aiVoice') || 'coral';
+$aiPassword.value = load('aiPassword') || '';
+$aiVoice.addEventListener('change', () => save('aiVoice', $aiVoice.value));
+$aiPassword.addEventListener('change', () => save('aiPassword', $aiPassword.value.trim()));
+
+// --- iOS 재생 허용 받기: 탭하는 순간 같은 Audio 객체로 아주 짧은 무음을 재생해 둠
+//     (그 뒤로는 네트워크를 기다렸다가 재생해도 iOS가 막지 않음)
+function makeSilentWav() {
+  const n = 800, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+const SILENT_WAV = makeSilentWav();
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audio.src = SILENT_WAV;
+  audio.play().then(() => { audioUnlocked = true; log('오디오 재생 허용됨'); })
+              .catch(e => log(`오디오 허용 실패: ${e.name}`));
+}
+
+// --- 문장 하나를 AI 음성(mp3)으로 받아오기
+function fetchAudio(text) {
+  const voice = $aiVoice.value;
+  const key = voice + '|' + text;
+  if (!aiCache.has(key)) {
+    const t0 = performance.now();
+    const p = fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-App-Password': $aiPassword.value.trim() },
+      body: JSON.stringify({ text, voice }),
+    }).then(async r => {
+      if (!r.ok) {
+        let info = {};
+        try { info = await r.json(); } catch (e) {}
+        if (r.status === 401) throw new Error('비밀번호가 틀렸어요');
+        throw new Error(`AI 음성 오류 ${r.status} ${info.error || ''} ${info.detail || ''}`.trim());
+      }
+      const url = URL.createObjectURL(await r.blob());
+      log(`AI 음성 받음 (${((performance.now() - t0) / 1000).toFixed(1)}초): ${text.slice(0, 30)}…`);
+      return url;
+    });
+    p.catch(() => aiCache.delete(key));   // 실패한 건 저장하지 않음 → 다음에 다시 시도
+    aiCache.set(key, p);
+  }
+  return aiCache.get(key);
+}
+
+// --- mp3 한 개 재생하고 끝날 때까지 기다리기
+function playUrl(url) {
+  return new Promise((resolve, reject) => {
+    audioDone = resolve;
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error('음성 재생 실패'));
+    audio.src = url;
+    audio.defaultPlaybackRate = Number($rate.value);   // 속도 조절 (음 높이는 유지됨)
+    audio.playbackRate = Number($rate.value);
+    audio.play().catch(reject);
+  });
+}
+
+function stopAudio() {
+  audio.pause();
+  if (audioDone) { audioDone(); audioDone = null; }
+}
+
+// --- 여러 문장을 차례로: 받기 → 재생, 재생하는 동안 다음 문장을 미리 받아 둠
+async function aiSpeakList(indices) {
+  if (!$aiPassword.value.trim()) { setStatus('🔑 AI 음성 비밀번호를 먼저 입력하세요'); $aiPassword.focus(); return; }
+  stopReading(true);
+  const my = session;
+  unlockAudio();                       // ← 탭 순간에 바로 실행되어야 함 (await 전에)
+  log(`AI 읽기 시작: ${indices.length}문장, voice=${$aiVoice.value}, 속도=${$rate.value}`);
+
+  for (let k = 0; k < indices.length; k++) {
+    const i = indices[k];
+    let url;
+    try {
+      setStatus(`⏳ 음성 준비 중… (${i + 1} / ${sentences.length})`);
+      url = await fetchAudio(sentences[i].text);
+    } catch (e) {
+      if (my === session) { highlight(-1); setStatus(`⚠️ ${e.message}`); log(`AI 오류: ${e.message}`); }
+      return;
+    }
+    if (my !== session) return;                                   // 그 사이 정지/다른 문장 선택됨
+    if (k + 1 < indices.length) fetchAudio(sentences[indices[k + 1]].text).catch(() => {});  // 다음 문장 미리 받기
+
+    highlight(i);
+    setStatus(`🔊 읽는 중… (${i + 1} / ${sentences.length})`);
+    try { await playUrl(url); }
+    catch (e) {
+      if (my === session) { highlight(-1); setStatus(`⚠️ ${e.message}`); log(`재생 오류: ${e.message}`); }
+      return;
+    }
+    if (my !== session) return;
+  }
+  highlight(-1);
+  setStatus('✅ 다 읽었어요');
+  log('AI 읽기 끝');
+}
+
+// --- 들어보기 버튼: 비밀번호·연결 확인용 짧은 문장
+document.getElementById('aiTest').addEventListener('click', async () => {
+  save('aiPassword', $aiPassword.value.trim());
+  if (!$aiPassword.value.trim()) { setStatus('🔑 비밀번호를 입력하세요'); return; }
+  stopReading(true);
+  const my = session;
+  unlockAudio();
+  try {
+    setStatus('⏳ 연결 확인 중…');
+    const url = await fetchAudio('Hello! Shall we read a story together?');
+    if (my !== session) return;
+    setStatus('✅ 연결 성공!');
+    await playUrl(url);
+  } catch (e) {
+    if (my === session) { setStatus(`⚠️ ${e.message}`); log(`AI 테스트 오류: ${e.message}`); }
+  }
+});
+
+setEngine(engine);
 
 // =====================================================================
 //  E. 사진 → 글자 인식 (2단계)
