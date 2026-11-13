@@ -885,7 +885,7 @@ function getOcr() {
       ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
       ort.env.wasm.numThreads = 1;      // GitHub Pages에서는 다중 스레드를 못 씀
       const t0 = performance.now();
-      const mod = await import('./paddle-ocr.js?v=1');
+      const mod = await import('./paddle-ocr.js?v=2');
       const ocr = await mod.createOcr(ort, { onProgress: m => { if (!busy) setOcrStatus(m); } });
       log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
       if (!busy) setOcrStatus('책 페이지를 찍어 주세요.');

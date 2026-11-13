@@ -121,14 +121,34 @@ async function readLine({ ort, rec, keys }, img, b) {
   const out = await rec.run({ [rec.inputNames[0]]: new ort.Tensor('float32', input, [1, 3, H, W]) });
   const t = out[rec.outputNames[0]];
   const [, T, C] = t.dims, d = t.data;
-  let text = '', prev = 0, sum = 0, cnt = 0;
+  const em = [];   // 읽힌 글자와 그 위치(칸 번호)
+  let prev = 0, sum = 0;
   for (let i = 0; i < T; i++) {
     let best = 0, bv = -Infinity;
     for (let c = 0; c < C; c++) if (d[i * C + c] > bv) { bv = d[i * C + c]; best = c; }
-    if (best !== 0 && best !== prev) { text += keys[best] ?? ''; sum += bv; cnt++; }
+    if (best !== 0 && best !== prev) { em.push({ i, ch: keys[best] ?? '' }); sum += bv; }
     prev = best;
   }
-  return { text, score: cnt ? sum / cnt : 0 };
+  return { text: restoreDashes(em, T), score: em.length ? sum / em.length : 0 };
+}
+
+// 긴 대시(—) 복원: 이 모델은 긴 대시를 못 읽고 그냥 건너뜀 → "reformers—most"가 "reformersmost"로 붙음.
+// 대신 그 자리에 글자 없는 빈 구간이 생기므로, 글자 사이 간격이 보통(1~3칸)보다 크게(5칸 이상) 벌어졌는데
+// 띄어쓰기도 없으면 그 자리에 "—"를 넣음. 줄 맨 끝/맨 앞의 대시는 양쪽 여백 차이로 판단.
+const GAP = 5;
+const isWordCh = ch => /[A-Za-z0-9,;.'’"”“]/.test(ch);
+function restoreDashes(em, T) {
+  if (!em.length) return '';
+  let text = em[0].ch;
+  const lead = em[0].i, trail = T - 1 - em[em.length - 1].i;
+  if (lead - trail >= GAP && /[A-Za-z]/.test(em[0].ch)) text = '—' + text;
+  for (let k = 1; k < em.length; k++) {
+    const a = em[k - 1], b = em[k];
+    if (b.i - a.i >= GAP && a.ch !== ' ' && b.ch !== ' ' && isWordCh(a.ch) && isWordCh(b.ch)) text += '—';
+    text += b.ch;
+  }
+  if (trail - lead >= GAP && /[A-Za-z]/.test(em[em.length - 1].ch)) text += '—';
+  return text;
 }
 
 // 사진에서 (x, y) 위치의 색을 주변 4점 보간으로 가져오기 (바깥은 흰색)
