@@ -904,8 +904,30 @@ function preparePiper() {
   return piperReady[voice];
 }
 
+// Piper는 대문자 약어를 단어처럼 읽음 (YMCA → "임카"). 그래서 소리 내서 읽기 어려운 대문자 약어는
+// 글자 사이를 띄워서 넘김 → "Y M C A"처럼 한 글자씩 읽음. 화면에 보이는 글은 그대로.
+const SPELL_WORDS = new Set(['USA', 'UK', 'EU', 'UN', 'CEO', 'ABC', 'ABCS', 'ATM', 'IOU', 'UFO', 'USB', 'ID', 'IQ', 'AI', 'CIA', 'PE', 'DJ']);
+const SAY_AS_WORD = new Set(['NASA', 'NATO', 'LEGO', 'UNICEF', 'SCUBA', 'LASER', 'RADAR']);
+const ONSETS = new Set('bl br ch cl cr dr dw fl fr gh gl gn gr kl kn kr ph pl pr ps qu sc sh sk sl sm sn sp st sv sw th tr ts tw wh wr'.split(' '));
+function needsSpelling(w) {
+  const u = w.toUpperCase(), l = w.toLowerCase();
+  if (SAY_AS_WORD.has(u)) return false;
+  if (SPELL_WORDS.has(u)) return true;
+  if (/^(.)\1+$/.test(l)) return false;                          // ZZZ, MMM 같은 소리
+  if (/^(sh+|hm+|gr+|br+|ps+t|tsk|hmph|pf+t|ugh|argh)$/.test(l)) return false;
+  const hasVowel = /[aeiou]/.test(l) || /.y/.test(l);            // 맨 앞이 아닌 y는 모음 역할 (MY, SKY)
+  if (!hasVowel) return true;                                    // TV, DVD, YMC…
+  const c2 = l.slice(0, 2);
+  return !/[aeiou]/.test(c2) && !(c2[1] === 'y' && c2[0] !== 'y') && !ONSETS.has(c2);   // YM-, FB-, NB- 로 시작
+}
+function piperText(text) {
+  return text.replace(/\b([A-Z]{2,5})(s?)\b/g, (m, w, s) =>
+    needsSpelling(w) ? w.split('').join(' ') + (s ? "'s" : '') : m);
+}
+
 function piperAudio(text) {
   const voice = $piperVoice.value;
+  text = piperText(text);
   const key = `${voice}|${normText(text)}`;
   if (!piperCache.has(key)) {
     const p = (async () => {
