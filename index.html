@@ -330,9 +330,12 @@ $voice.addEventListener('change', () => { save('voiceURI', $voice.value); log(`�
 
 const savedRate = load('rate');
 if (savedRate) $rate.value = savedRate;
-$rateV.textContent = Number($rate.value).toFixed(2);
+function updateRateLabel() {
+  const v = Number($rate.value).toFixed(2);
+  $rateV.textContent = engine === 'ai' ? `${v} (AI: ${PACE_LABEL[aiPace()]})` : v;
+}
 $rate.addEventListener('input', () => {
-  $rateV.textContent = Number($rate.value).toFixed(2);
+  updateRateLabel();
   save('rate', $rate.value);
 });
 
@@ -444,12 +447,15 @@ function renderSentences() {
 }
 
 // 스크롤하다 손을 뗀 것을 "탭"으로 오인하지 않도록:
-//  ① 손가락이 10px 넘게 움직였거나 ② 0.4초 이내에 화면이 스크롤됐으면 탭이 아님
-let touchStartY = 0, touchMoved = false, lastScrollAt = 0;
-document.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchMoved = false; }, { passive: true });
+//  ① 손가락이 10px 넘게 움직였거나 ② 손가락으로 스크롤한 직후(관성 스크롤 포함 0.4초 이내)면 탭이 아님
+//  (글자·상태 문구가 바뀌며 화면이 저절로 밀리는 스크롤은 사용자 스크롤로 치지 않음)
+let touchStartY = 0, touchMoved = false, touching = false, touchEndAt = 0, lastScrollAt = 0;
+document.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchMoved = false; touching = true; }, { passive: true });
 document.addEventListener('touchmove',  e => { if (Math.abs(e.touches[0].clientY - touchStartY) > 10) touchMoved = true; }, { passive: true });
-let autoScrollUntil = 0;   // 읽는 문장을 따라 앱이 스스로 스크롤하는 동안은 사용자 스크롤로 치지 않음
-window.addEventListener('scroll', () => { if (Date.now() > autoScrollUntil) lastScrollAt = Date.now(); }, { passive: true });
+document.addEventListener('touchend',   () => { touching = false; touchEndAt = Date.now(); }, { passive: true });
+window.addEventListener('scroll', () => {
+  if (touching || Date.now() - touchEndAt < 1500) lastScrollAt = Date.now();
+}, { passive: true });
 function isRealTap() {
   if (touchMoved || Date.now() - lastScrollAt < 400) { log('스크롤 중 터치 → 무시'); return false; }
   return true;
@@ -461,7 +467,6 @@ function highlight(i) {
   highlighted = i;
   if (i >= 0 && sentences[i]) {
     sentences[i].el.classList.add('active');
-    autoScrollUntil = Date.now() + 800;
     sentences[i].el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 }
@@ -558,6 +563,7 @@ function setEngine(e) {
   document.getElementById('engAi').classList.toggle('on', e === 'ai');
   document.getElementById('deviceBox').style.display = e === 'device' ? '' : 'none';
   document.getElementById('aiBox').style.display     = e === 'ai'     ? '' : 'none';
+  updateRateLabel();
   stopReading(true);
 }
 document.getElementById('engDevice').addEventListener('click', () => setEngine('device'));
@@ -584,14 +590,23 @@ function unlockAudio() {
   if (audioUnlocked) return;
   audio.src = SILENT_WAV;
   audio.play().then(() => { audioUnlocked = true; log('오디오 재생 허용됨'); })
-              .catch(e => log(`오디오 허용 실패: ${e.name}`));
+              .catch(e => {
+                // AbortError = 무음이 끝나기 전에 진짜 음성으로 바뀐 것 → 허용은 이미 받은 상태
+                if (e.name === 'AbortError') audioUnlocked = true;
+                else log(`오디오 허용 실패: ${e.name}`);
+              });
 }
 
 // --- 기기 저장소 (IndexedDB): 받은 AI 음성을 기기에 보관 → 같은 문장은 다음에 0원
 //     iPhone 사파리는 Blob 저장에 버그가 있던 적이 있어 ArrayBuffer(원본 바이트)로 저장
 const DB_NAME = 'readaloud', STORE = 'audio';
 const MAX_BYTES = 200 * 1024 * 1024;   // 최대 200MB. 넘으면 오래 안 쓴 것부터 지움
-const AI_PACE = 'normal';              // 저장 키에 포함 (나중에 말하기 속도 옵션이 생겨도 섞이지 않게)
+// AI 음성은 재생을 늦추면 소리가 뭉개지므로, 속도 슬라이더를 "말하는 빠르기" 3단계로 바꿔 AI에게 요청
+function aiPace() {
+  const r = Number($rate.value);
+  return r >= 0.95 ? 'normal' : r >= 0.8 ? 'slow' : 'very_slow';
+}
+const PACE_LABEL = { normal: '보통', slow: '조금 천천히', very_slow: '천천히' };
 let dbPromise = null;
 
 function idb(req) {
@@ -676,7 +691,8 @@ showStoreInfo();
 // --- 문장 하나의 AI 음성 가져오기: ① 메모리 → ② 기기 저장소 → ③ 서버(유료) 순서
 function fetchAudio(text) {
   const voice = $aiVoice.value;
-  const key = `${voice}|${AI_PACE}|${text}`;
+  const pace = aiPace();
+  const key = `${voice}|${pace}|${text}`;
   if (!aiCache.has(key)) {
     const p = (async () => {
       const saved = await dbGet(key);
@@ -688,7 +704,7 @@ function fetchAudio(text) {
       const r = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-App-Password': $aiPassword.value.trim() },
-        body: JSON.stringify({ text, voice }),
+        body: JSON.stringify({ text, voice, pace }),
       });
       if (!r.ok) {
         let info = {};
@@ -714,8 +730,8 @@ function playUrl(url) {
     audio.onended = () => resolve();
     audio.onerror = () => reject(new Error('음성 재생 실패'));
     audio.src = url;
-    audio.defaultPlaybackRate = Number($rate.value);   // 속도 조절 (음 높이는 유지됨)
-    audio.playbackRate = Number($rate.value);
+    audio.defaultPlaybackRate = 1;     // AI 음성은 원래 속도로 재생 (빠르기는 AI가 말할 때 조절)
+    audio.playbackRate = 1;
     audio.play().catch(reject);
   });
 }

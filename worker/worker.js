@@ -10,6 +10,12 @@ const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'ony
 const INSTRUCTIONS =
   'You are reading a storybook aloud to a young child who is learning English. ' +
   'Speak warmly, clearly and naturally, with gentle expression and natural pauses.';
+// 말하는 빠르기 (앱의 속도 슬라이더에 따라 3단계)
+const PACE = {
+  normal:    '',
+  slow:      ' Speak a little more slowly than usual, with short pauses between phrases.',
+  very_slow: ' Speak slowly and very clearly, like reading to a beginner reader, with short pauses between phrases.',
+};
 
 function cors(origin) {
   return {
@@ -54,6 +60,7 @@ export default {
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, origin); }
     const text  = String(body.text || '').trim();
     const voice = VOICES.includes(body.voice) ? body.voice : 'coral';
+    const pace  = Object.hasOwn(PACE, body.pace) ? body.pace : 'normal';
     if (!text)                   return json({ error: 'empty text' }, 400, origin);
     if (text.length > MAX_CHARS) return json({ error: 'text too long' }, 413, origin);
 
@@ -61,7 +68,7 @@ export default {
     const r = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, input: text, voice, instructions: INSTRUCTIONS, response_format: 'mp3' }),
+      body: JSON.stringify({ model: MODEL, input: text, voice, instructions: INSTRUCTIONS + PACE[pace], response_format: 'mp3' }),
     });
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 300);
