@@ -206,7 +206,11 @@
         <input id="aiPassword" type="password" placeholder="비밀번호" autocomplete="current-password">
         <button id="aiTest">🔊 들어보기</button>
       </div>
-      <div class="hint" style="margin-top:8px">비밀번호는 이 기기에만 저장돼요. 한 번 읽은 문장은 다시 읽어도 요금이 들지 않아요(앱을 닫기 전까지).</div>
+      <div class="hint" style="margin-top:8px">비밀번호와 받은 음성은 이 기기에만 저장돼요. 한 번 읽은 문장은 다음부터 요금이 들지 않아요.</div>
+      <div class="row" style="align-items:center">
+        <div id="storeInfo" class="hint" style="flex:1;margin:0">💾 기기에 저장된 음성: 확인 중…</div>
+        <button id="storeClear" style="background:#888">지우기</button>
+      </div>
     </div>
   </div>
 
@@ -583,27 +587,120 @@ function unlockAudio() {
               .catch(e => log(`오디오 허용 실패: ${e.name}`));
 }
 
-// --- 문장 하나를 AI 음성(mp3)으로 받아오기
+// --- 기기 저장소 (IndexedDB): 받은 AI 음성을 기기에 보관 → 같은 문장은 다음에 0원
+//     iPhone 사파리는 Blob 저장에 버그가 있던 적이 있어 ArrayBuffer(원본 바이트)로 저장
+const DB_NAME = 'readaloud', STORE = 'audio';
+const MAX_BYTES = 200 * 1024 * 1024;   // 최대 200MB. 넘으면 오래 안 쓴 것부터 지움
+const AI_PACE = 'normal';              // 저장 키에 포함 (나중에 말하기 속도 옵션이 생겨도 섞이지 않게)
+let dbPromise = null;
+
+function idb(req) {
+  return new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+}
+function openDb() {
+  if (!dbPromise) {
+    dbPromise = new Promise((res, rej) => {
+      const r = indexedDB.open(DB_NAME, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }).catch(e => { log(`기기 저장소 사용 불가: ${e}`); return null; });
+  }
+  return dbPromise;
+}
+async function dbGet(key) {
+  try {
+    const db = await openDb(); if (!db) return null;
+    const rec = await idb(db.transaction(STORE).objectStore(STORE).get(key));
+    if (!rec) return null;
+    rec.t = Date.now();                                            // 마지막 사용 시각 갱신
+    db.transaction(STORE, 'readwrite').objectStore(STORE).put(rec, key);
+    return rec.buf;
+  } catch (e) { log(`저장소 읽기 오류: ${e}`); return null; }
+}
+async function dbPut(key, buf) {
+  try {
+    const db = await openDb(); if (!db) return;
+    await idb(db.transaction(STORE, 'readwrite').objectStore(STORE).put({ buf, size: buf.byteLength, t: Date.now() }, key));
+    await dbPrune();
+  } catch (e) { log(`저장소 쓰기 오류: ${e}`); }
+}
+// 전체 목록(키, 크기, 마지막 사용 시각) – 음성 데이터 자체는 읽지 않음
+async function dbList() {
+  const db = await openDb(); if (!db) return [];
+  return new Promise((res, rej) => {
+    const out = [];
+    const req = db.transaction(STORE).objectStore(STORE).openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (c) { out.push({ key: c.key, size: c.value.size, t: c.value.t }); c.continue(); } else res(out);
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbPrune() {
+  const list = await dbList();
+  let total = list.reduce((s, x) => s + x.size, 0);
+  if (total <= MAX_BYTES) return showStoreInfo(list);
+  const db = await openDb();
+  list.sort((a, b) => a.t - b.t);                                  // 오래 안 쓴 순
+  for (const x of list) {
+    if (total <= MAX_BYTES * 0.9) break;
+    await idb(db.transaction(STORE, 'readwrite').objectStore(STORE).delete(x.key));
+    total -= x.size;
+  }
+  log('저장 공간 정리: 오래된 음성 삭제');
+  showStoreInfo();
+}
+async function showStoreInfo(list) {
+  try {
+    list = list || await dbList();
+    const mb = list.reduce((s, x) => s + x.size, 0) / 1024 / 1024;
+    document.getElementById('storeInfo').textContent = `💾 기기에 저장된 음성: ${list.length}개 · ${mb.toFixed(1)}MB`;
+  } catch (e) {}
+}
+document.getElementById('storeClear').addEventListener('click', async () => {
+  if (!confirm('기기에 저장된 AI 음성을 모두 지울까요?')) return;
+  const db = await openDb(); if (!db) return;
+  await idb(db.transaction(STORE, 'readwrite').objectStore(STORE).clear());
+  aiCache.clear();
+  log('저장된 음성 모두 삭제');
+  showStoreInfo();
+});
+// 브라우저에게 "이 데이터는 함부로 지우지 말아 달라"고 요청 (허용 여부는 브라우저가 결정)
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().then(ok => log(`영구 보관 요청: ${ok ? '허용' : '거절(기본 규칙 적용)'}`)).catch(() => {});
+}
+showStoreInfo();
+
+// --- 문장 하나의 AI 음성 가져오기: ① 메모리 → ② 기기 저장소 → ③ 서버(유료) 순서
 function fetchAudio(text) {
   const voice = $aiVoice.value;
-  const key = voice + '|' + text;
+  const key = `${voice}|${AI_PACE}|${text}`;
   if (!aiCache.has(key)) {
-    const t0 = performance.now();
-    const p = fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-App-Password': $aiPassword.value.trim() },
-      body: JSON.stringify({ text, voice }),
-    }).then(async r => {
+    const p = (async () => {
+      const saved = await dbGet(key);
+      if (saved) {
+        log(`저장된 음성 사용 (0원): ${text.slice(0, 30)}…`);
+        return URL.createObjectURL(new Blob([saved], { type: 'audio/mpeg' }));
+      }
+      const t0 = performance.now();
+      const r = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-App-Password': $aiPassword.value.trim() },
+        body: JSON.stringify({ text, voice }),
+      });
       if (!r.ok) {
         let info = {};
         try { info = await r.json(); } catch (e) {}
         if (r.status === 401) throw new Error('비밀번호가 틀렸어요');
         throw new Error(`AI 음성 오류 ${r.status} ${info.error || ''} ${info.detail || ''}`.trim());
       }
-      const url = URL.createObjectURL(await r.blob());
-      log(`AI 음성 받음 (${((performance.now() - t0) / 1000).toFixed(1)}초): ${text.slice(0, 30)}…`);
-      return url;
-    });
+      const buf = await r.arrayBuffer();
+      log(`AI 음성 받음 (${((performance.now() - t0) / 1000).toFixed(1)}초, 유료): ${text.slice(0, 30)}…`);
+      dbPut(key, buf);                                   // 기기에 보관 (기다리지 않음)
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+    })();
     p.catch(() => aiCache.delete(key));   // 실패한 건 저장하지 않음 → 다음에 다시 시도
     aiCache.set(key, p);
   }
