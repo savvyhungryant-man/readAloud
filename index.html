@@ -1024,7 +1024,38 @@ async function handleFile(e) {
 document.getElementById('fileCamera').addEventListener('change', handleFile);
 document.getElementById('fileAlbum').addEventListener('change', handleFile);
 
+// =====================================================================
+//  G. 단축어에서 넘어온 글 받기
+//     주소 끝에 "#t=글"이 붙어 오면 사진 인식을 건너뛰고 그 글로 바로 문장 보기를 만듦
+//     (# 뒤 부분은 서버로 전송되지 않아서 글이 길어도 괜찮고, 기기 밖으로 나가지 않음)
+// =====================================================================
+function receiveFromUrl() {
+  const m = location.hash.match(/[#&]t=([^&]*)/);
+  if (!m) return false;
+  let raw;
+  try { raw = decodeURIComponent(m[1].replace(/\+/g, ' ')); }
+  catch (e) { log('주소로 받은 글 해석 실패'); return false; }
+  // 주소에서 글을 지움 → 새로고침해도 같은 글을 또 받지 않음
+  history.replaceState(null, '', location.pathname + location.search);
+
+  raw = raw.replace(/\r\n?/g, '\n');
+  const text = cleanText(raw);                 // 머리글·쪽번호 제거 등 기존 정리 그대로 사용
+  log(`단축어에서 글 받음: ${raw.length}자 → 정리 후 ${text.length}자`);
+  if (!text) { setOcrStatus('😢 받은 글이 비어 있어요. 다시 찍어 주세요.'); return true; }
+
+  $text.value = text;
+  renderSentences();
+  $preview.style.display = 'none';
+  setOcrStatus('✅ 글을 받았어요 – ▶ 읽기를 누르세요');
+  setStatus('▶ 읽기를 누르세요');
+  window.scrollTo(0, 0);
+  return true;
+}
+
 renderSentences();   // 처음 예시 글도 문장 보기로 표시
+receiveFromUrl();    // 단축어로 열렸으면 받은 글로 바꿈
+// 이미 열려 있는 탭에서 주소의 # 부분만 바뀌면 새로 열리지 않으므로 따로 감지
+window.addEventListener('hashchange', () => { stopReading(true); receiveFromUrl(); });
 </script>
 </body>
 </html>
