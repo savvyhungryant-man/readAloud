@@ -145,53 +145,6 @@
 <body>
 <main>
   <h1>📖 Read Aloud</h1>
-
-  <!-- ===== 사진 찍기 ===== -->
-  <div class="card">
-    <!-- 앱 안 카메라: 미리보기를 띄워 두고 버튼 한 번으로 찍고 바로 읽기 -->
-    <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
-    <div id="liveBox">
-      <video id="liveVideo" playsinline muted autoplay></video>
-      <div class="buttons" style="margin-top:10px">
-        <button class="big-btn shot-btn" id="btnShot">📸 찍고 읽기</button>
-        <button class="big-btn live-off" id="btnLiveOff">끄기</button>
-      </div>
-    </div>
-    <div class="buttons">
-      <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
-      <label class="big-btn album-btn"  id="lblAlbum"  for="fileAlbum">🖼 앨범</label>
-    </div>
-    <input id="fileCamera" type="file" accept="image/*" capture="environment">
-    <input id="fileAlbum"  type="file" accept="image/*">
-    <progress id="ocrProgress" max="100" value="0"></progress>
-    <div class="status" id="ocrStatus">책 페이지를 찍어 주세요.</div>
-    <img id="preview" alt="찍은 사진 미리보기">
-  </div>
-
-  <!-- ===== 읽기 / 정지 ===== -->
-  <div class="card">
-    <div class="buttons">
-      <button class="big-btn" id="btnSpeak">▶ 읽기</button>
-      <button class="big-btn" id="btnStop">■ 정지</button>
-    </div>
-    <div class="status" id="status">준비 중…</div>
-  </div>
-
-  <!-- ===== 문장 보기 (탭하면 그 문장만 읽기) ===== -->
-  <div class="card">
-    <div class="hint">👆 문장을 누르면 그 문장만 다시 읽어요</div>
-    <div id="reader"></div>
-  </div>
-
-  <!-- ===== 글 고치기 (평소엔 접어 둠) ===== -->
-  <details class="card">
-    <summary>✏️ 글 고치기</summary>
-    <div class="hint">틀린 글자를 고치면 위 문장 보기에 바로 반영돼요. 빈 줄 = 문단 나눔</div>
-    <textarea id="text">Dink, Josh, and Ruth Rose were sitting on Ruth Rose's front porch. It was a hot summer day. "Let's go to the library," said Josh.
-
-"Who sent this?" asked Josh. Mr. Pocket shook his head.</textarea>
-  </details>
-
   <div class="card">
     <label>음성 종류</label>
     <div class="seg">
@@ -243,6 +196,56 @@
       </div>
     </div>
   </div>
+
+
+  <!-- ===== 사진 찍기 ===== -->
+  <div class="card">
+    <!-- 앱 안 카메라: 미리보기를 띄워 두고 버튼 한 번으로 찍고 바로 읽기 -->
+    <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
+    <div id="liveBox">
+      <video id="liveVideo" playsinline muted autoplay></video>
+      <div class="buttons" style="margin-top:10px">
+        <button class="big-btn shot-btn" id="btnShot">📸 찍고 읽기</button>
+        <button class="big-btn live-off" id="btnLiveOff">끄기</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:16px">
+        <input type="checkbox" id="autoTurn" style="width:22px;height:22px"> 페이지 넘기면 자동으로 읽기
+      </label>
+    </div>
+    <div class="buttons">
+      <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
+      <label class="big-btn album-btn"  id="lblAlbum"  for="fileAlbum">🖼 앨범</label>
+    </div>
+    <input id="fileCamera" type="file" accept="image/*" capture="environment">
+    <input id="fileAlbum"  type="file" accept="image/*">
+    <progress id="ocrProgress" max="100" value="0"></progress>
+    <div class="status" id="ocrStatus">책 페이지를 찍어 주세요.</div>
+    <img id="preview" alt="찍은 사진 미리보기">
+  </div>
+
+  <!-- ===== 읽기 / 정지 ===== -->
+  <div class="card">
+    <div class="buttons">
+      <button class="big-btn" id="btnSpeak">▶ 읽기</button>
+      <button class="big-btn" id="btnStop">■ 정지</button>
+    </div>
+    <div class="status" id="status">준비 중…</div>
+  </div>
+
+  <!-- ===== 문장 보기 (탭하면 그 문장만 읽기) ===== -->
+  <div class="card">
+    <div class="hint">👆 문장을 누르면 그 문장만 다시 읽어요</div>
+    <div id="reader"></div>
+  </div>
+
+  <!-- ===== 글 고치기 (평소엔 접어 둠) ===== -->
+  <details class="card">
+    <summary>✏️ 글 고치기</summary>
+    <div class="hint">틀린 글자를 고치면 위 문장 보기에 바로 반영돼요. 빈 줄 = 문단 나눔</div>
+    <textarea id="text">Dink, Josh, and Ruth Rose were sitting on Ruth Rose's front porch. It was a hot summer day. "Let's go to the library," said Josh.
+
+"Who sent this?" asked Josh. Mr. Pocket shook his head.</textarea>
+  </details>
 
   <div class="card">
     <label for="rate">읽기 속도: <span id="rateValue">0.85</span></label>
@@ -454,6 +457,7 @@ function splitSentences(para) {
 let sentences = [];   // [{ text, el }]
 
 function renderSentences() {
+  lastReadIdx = -1;
   stopReading(true);
   $reader.innerHTML = '';
   sentences = [];
@@ -494,9 +498,12 @@ function isRealTap() {
 }
 
 let highlighted = -1;
+let lastReadIdx = -1;      // 마지막으로 읽기 시작한 문장 번호 (페이지 넘김 자동 감지에 사용)
+let readingActive = false; // 지금 읽는 중인지
 function highlight(i) {
   if (highlighted >= 0 && sentences[highlighted]) sentences[highlighted].el.classList.remove('active');
   highlighted = i;
+  if (i >= 0) lastReadIdx = i;
   if (i >= 0 && sentences[i]) {
     sentences[i].el.classList.add('active');
     sentences[i].el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -520,6 +527,7 @@ function makeUtterance(text) {
 // 읽기 진입점: 선택한 음성 종류에 따라 기기 음성 / AI 음성으로 나눔
 function speakList(indices) {
   if (!indices.length) return;
+  readingActive = true;
   if (engine === 'device') deviceSpeakList(indices);
   else                     audioSpeakList(indices);   // AI / Piper: 음성 파일을 만들어 재생
 }
@@ -542,6 +550,7 @@ function deviceSpeakList(indices) {
     u.onend = () => {
       if (my !== session || i !== last) return;
       highlight(-1);
+      readingActive = false;
       setStatus('✅ 다 읽었어요');
       log('읽기 끝');
     };
@@ -564,6 +573,7 @@ function speakAll() {
 
 function stopReading(silent) {
   session++;
+  readingActive = false;
   if (synth) synth.cancel();
   stopAudio();
   highlight(-1);
@@ -871,6 +881,7 @@ async function audioSpeakList(indices) {
     if (my !== session) return;
   }
   highlight(-1);
+  readingActive = false;
   setStatus('✅ 다 읽었어요');
   log(`${name} 읽기 끝`);
 }
@@ -1054,8 +1065,8 @@ async function handleFile(e) {
 }
 
 // 공용: 사진(canvas) 준비 → 글자 인식 → 문장 보기 → (기기 음성·Piper면) 바로 읽기
-async function recognizeAndRead(getCanvas, { showPreview = true } = {}) {
-  stopReading(true);
+async function recognizeAndRead(getCanvas, { showPreview = true, auto = false } = {}) {
+  if (!auto) stopReading(true);   // 자동 넘김일 땐 읽던 마지막 문장을 끊지 않음
   setBusy(true);
   $ocrProgress.removeAttribute('value');   // 진행률 대신 "작업 중" 막대
   try {
@@ -1076,9 +1087,14 @@ async function recognizeAndRead(getCanvas, { showPreview = true } = {}) {
 
     const text = cleanText(mod.linesToText(r.lines));   // 머리글·쪽번호 제거, 끊긴 줄 합치기
     log(`인식 완료: ${sec}초 (찾기 ${(r.detMs / 1000).toFixed(1)} + 읽기 ${(r.recMs / 1000).toFixed(1)}), ${r.lines.length}줄, ${text.length}자`);
-    if (!text) {
+    if (auto && isSamePage(text, $text.value)) {
+      log('자동 넘김: 같은 페이지라 무시');
+      setOcrStatus('📖 다음 페이지를 기다리는 중…');
+    } else if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
     } else {
+      // 자동 넘김: 아직 마지막 문장을 읽는 중이면 끝날 때까지 기다렸다가 새 페이지로
+      while (auto && readingActive) await new Promise(r => setTimeout(r, 200));
       $text.value = text;
       renderSentences();
       if (engine === 'ai') {
@@ -1172,9 +1188,72 @@ function grabFrame() {
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
   canvas.getContext('2d').drawImage($liveVideo, 0, 0, canvas.width, canvas.height);
+  autoRef = smallFrame();                // 이 화면이 "지금 페이지" 기준이 됨
   log(`카메라 캡처: ${w}x${h} → ${canvas.width}x${canvas.height}`);
   return canvas;
 }
+
+// ---------------------------------------------------------------------
+//  페이지 넘김 자동 감지 (카메라 켜져 있고, 지금 페이지를 거의 다 읽었을 때만)
+//   카메라 화면을 아주 작게(48px 폭, 흑백) 줄여 0.25초마다 비교:
+//   ① 마지막으로 찍은 화면과 크게 달라짐(=페이지가 바뀜)  ② 그 상태로 1초 동안 거의 안 움직임(=손이 빠짐)
+//   → 자동으로 찍고 읽기. 찍은 글이 이전 페이지와 같으면 무시.
+// ---------------------------------------------------------------------
+const AUTO_NEW = 14;        // 마지막 찍은 화면과 이 이상 다르면 "페이지가 바뀜" (0~255 밝기 차이 평균)
+const AUTO_STILL = 4;       // 직전 화면과 이 미만이면 "멈춰 있음"
+const AUTO_STILL_MS = 1000; // 이만큼 멈춰 있어야 찍음
+const $autoTurn = document.getElementById('autoTurn');
+$autoTurn.checked = load('autoTurn') !== '0';
+$autoTurn.addEventListener('change', () => save('autoTurn', $autoTurn.checked ? '1' : '0'));
+const autoCv = document.createElement('canvas');
+let autoRef = null, autoPrev = null, autoStillSince = 0, autoLastLog = 0;
+
+function smallFrame() {
+  const vw = $liveVideo.videoWidth, vh = $liveVideo.videoHeight;
+  if (!vw || !vh) return null;
+  const w = 48, h = Math.round(48 * vh / vw);
+  autoCv.width = w; autoCv.height = h;
+  const ctx = autoCv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage($liveVideo, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+  let sum = 0;
+  for (let i = 0; i < w * h; i++) { g[i] = 0.3 * d[i * 4] + 0.59 * d[i * 4 + 1] + 0.11 * d[i * 4 + 2]; sum += g[i]; }
+  const mean = sum / (w * h);
+  for (let i = 0; i < g.length; i++) g[i] -= mean;    // 전체 밝기 변화(자동 노출)는 무시
+  return g;
+}
+function frameDiff(a, b) {
+  if (!a || !b || a.length !== b.length) return 999;
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+function isSamePage(a, b) {
+  const x = normText(a).slice(0, 80), y = normText(b).slice(0, 80);
+  return x.length > 10 && editDistance(x, y, 10) <= 10;
+}
+
+setInterval(() => {
+  if (!liveStream || !$autoTurn.checked || engine === 'ai' || busy) { autoStillSince = 0; return; }
+  const cur = smallFrame();
+  if (!cur) return;
+  const still = frameDiff(cur, autoPrev) < AUTO_STILL;
+  autoPrev = cur;
+  if (!autoRef) { autoRef = cur; return; }
+  // 지금 페이지를 거의 다 읽었을 때만 (마지막 2문장째부터, 또는 다 읽은 뒤)
+  const nearEnd = sentences.length > 0 && lastReadIdx >= sentences.length - 2;
+  if (!nearEnd) { autoStillSince = 0; return; }
+  const dRef = frameDiff(cur, autoRef);
+  const now = performance.now();
+  if (now - autoLastLog > 3000) { autoLastLog = now; log(`[자동 넘김 감시] 찍은 화면과 차이 ${dRef.toFixed(1)} (기준 ${AUTO_NEW})`); }
+  if (dRef < AUTO_NEW || !still) { autoStillSince = 0; return; }
+  if (!autoStillSince) { autoStillSince = now; return; }
+  if (now - autoStillSince < AUTO_STILL_MS) return;
+  autoStillSince = 0;
+  log(`자동 넘김: 새 페이지 감지 (차이 ${dRef.toFixed(1)}) → 찍고 읽기`);
+  setOcrStatus('📖 새 페이지! 읽는 중…');
+  recognizeAndRead(async () => grabFrame(), { showPreview: false, auto: true });
+}, 250);
 
 $btnLiveOn.addEventListener('click', startLive);
 document.getElementById('btnLiveOff').addEventListener('click', () => { stopLive('책 페이지를 찍어 주세요.'); save('liveCam', '0'); });
