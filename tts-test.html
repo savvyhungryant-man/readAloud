@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>음성 시험</title>
+<style>
+  body { margin: 0; padding: 16px; background: #fffaf0; color: #222;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 17px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 10px; }
+  textarea { width: 100%; box-sizing: border-box; font-size: 17px; line-height: 1.5; padding: 10px;
+             border: 1px solid #ccc; border-radius: 10px; min-height: 110px; }
+  select { font-size: 16px; padding: 8px; border-radius: 10px; width: 100%; margin-bottom: 10px; }
+  .row { display: flex; gap: 10px; }
+  button { flex: 1; font-size: 18px; font-weight: 700; padding: 14px 0; border-radius: 14px; border: 0;
+           background: #1565c0; color: #fff; touch-action: manipulation; }
+  button.go { background: #2e7d32; }
+  button:disabled { opacity: .4; }
+  .st { margin-top: 10px; color: #555; font-size: 15px; white-space: pre-wrap; }
+  #log { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; color: #444; max-height: 260px; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔊 무료 음성 엔진 시험</h1>
+  <div class="card">
+    <b>읽을 글</b>
+    <textarea id="text">YMCA board. Many of my father's friends were members of the Municipal League. No, not bowling, but an organization of young nonpartisan reformers—most of the people were like my parents, in their thirties.</textarea>
+  </div>
+
+  <div class="card">
+    <h2>① Kokoro</h2>
+    <div class="sub">품질 최상 · 처음 약 90MB 받기 · 속도가 관건</div>
+    <select id="kVoice">
+      <option value="af_heart">af_heart (여성, 최고 등급)</option>
+      <option value="af_bella">af_bella (여성)</option>
+      <option value="bf_emma">bf_emma (영국 여성)</option>
+      <option value="am_michael">am_michael (남성)</option>
+    </select>
+    <div class="row">
+      <button id="kLoad">준비</button>
+      <button id="kPlay" class="go" disabled>▶ 읽기</button>
+    </div>
+    <div class="st" id="kSt">아직 준비 안 됨</div>
+  </div>
+
+  <div class="card">
+    <h2>② Piper</h2>
+    <div class="sub">가볍고 빠름 · 음성마다 처음 약 60MB 받기</div>
+    <select id="pVoice">
+      <option value="en_US-hfc_female-medium">hfc_female (여성)</option>
+      <option value="en_US-amy-medium">amy (여성)</option>
+      <option value="en_US-lessac-medium">lessac (여성)</option>
+      <option value="en_US-ryan-medium">ryan (남성)</option>
+    </select>
+    <div class="row">
+      <button id="pLoad">준비</button>
+      <button id="pPlay" class="go" disabled>▶ 읽기</button>
+    </div>
+    <div class="st" id="pSt">아직 준비 안 됨</div>
+  </div>
+
+  <div class="card"><b>기록</b><div id="log"></div></div>
+</main>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const log = m => { $('log').textContent = `[${new Date().toLocaleTimeString()}] ${m}\n` + $('log').textContent; };
+const sec = ms => (ms / 1000).toFixed(1) + '초';
+
+// iPhone은 화면을 누른 순간에만 소리 재생을 허용 → 누를 때 같은 오디오를 미리 깨워 두고 계속 재사용
+const player = new Audio();
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+function unlock() { player.src = SILENT; player.play().catch(() => {}); }
+function play(blob) {
+  return new Promise(res => {
+    player.src = URL.createObjectURL(blob);
+    player.onended = res; player.onerror = res;
+    player.play().catch(e => { log('재생 실패: ' + e.message); res(); });
+  });
+}
+// 문장 단위로 나눠서 만들고 재생 (실제 앱과 같은 방식)
+const sentences = () => $('text').value.match(/[^.!?]+[.!?]+["”’]?|\S[^.!?]*$/g).map(s => s.trim()).filter(Boolean);
+
+async function readAll(name, gen, st) {
+  const list = sentences();
+  let totalGen = 0, totalAudio = 0;
+  for (let i = 0; i < list.length; i++) {
+    st.textContent = `${i + 1}/${list.length} 문장 만드는 중…`;
+    const t0 = performance.now();
+    const blob = await gen(list[i]);
+    const g = performance.now() - t0;
+    const dur = await blobDuration(blob);
+    totalGen += g; totalAudio += dur;
+    log(`${name} ${i + 1}번: 만들기 ${sec(g)} / 길이 ${dur.toFixed(1)}초 – ${list[i].slice(0, 30)}…`);
+    st.textContent = `${i + 1}/${list.length} 재생 중 (만들기 ${sec(g)})`;
+    await play(blob);
+  }
+  st.textContent = `✅ 끝: 만들기 합계 ${sec(totalGen)} / 음성 길이 합계 ${totalAudio.toFixed(1)}초\n(만들기가 음성 길이보다 짧으면 앱에서 끊김 없이 읽을 수 있어요)`;
+}
+function blobDuration(blob) {
+  return new Promise(res => {
+    const a = new Audio(); a.preload = 'metadata';
+    a.onloadedmetadata = () => res(isFinite(a.duration) ? a.duration : 0);
+    a.onerror = () => res(0);
+    a.src = URL.createObjectURL(blob);
+  });
+}
+
+// ---------- Kokoro ----------
+let kokoro = null;
+$('kLoad').onclick = async () => {
+  $('kLoad').disabled = true;
+  const st = $('kSt'), t0 = performance.now();
+  try {
+    st.textContent = '라이브러리 받는 중…';
+    const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js');
+    const seen = {};
+    kokoro = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
+      dtype: 'q8', device: 'wasm',
+      progress_callback: p => {
+        if (p.status === 'progress' && p.total) {
+          const pct = Math.round(p.loaded / p.total * 100);
+          if (seen[p.file] !== pct) { seen[p.file] = pct; st.textContent = `모델 받는 중… ${p.file} ${pct}%`; }
+        }
+      },
+    });
+    st.textContent = `✅ 준비 완료 (${sec(performance.now() - t0)})`;
+    log(`Kokoro 준비 ${sec(performance.now() - t0)}`);
+    $('kPlay').disabled = false;
+  } catch (e) {
+    st.textContent = '❌ 실패: ' + e.message; log('Kokoro 오류: ' + (e.stack || e.message));
+    $('kLoad').disabled = false;
+  }
+};
+$('kPlay').onclick = async () => {
+  unlock();
+  $('kPlay').disabled = true;
+  try {
+    await readAll('Kokoro', async s => (await kokoro.generate(s, { voice: $('kVoice').value })).toBlob(), $('kSt'));
+  } catch (e) { $('kSt').textContent = '❌ ' + e.message; log('Kokoro 오류: ' + (e.stack || e.message)); }
+  $('kPlay').disabled = false;
+};
+
+// ---------- Piper ----------
+let piper = null;
+$('pLoad').onclick = async () => {
+  $('pLoad').disabled = true;
+  const st = $('pSt'), t0 = performance.now(), voice = $('pVoice').value;
+  try {
+    st.textContent = '라이브러리 받는 중…';
+    piper = piper || await import('https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/+esm');
+    await piper.download(voice, p => { if (p.total) st.textContent = `모델 받는 중… ${Math.round(p.loaded / p.total * 100)}%`; });
+    st.textContent = '첫 실행 준비 중…';
+    await piper.predict({ text: 'Hi.', voiceId: voice });   // 엔진을 한 번 데워 둠
+    st.textContent = `✅ 준비 완료 (${sec(performance.now() - t0)})`;
+    log(`Piper ${voice} 준비 ${sec(performance.now() - t0)}`);
+    $('pPlay').disabled = false;
+  } catch (e) {
+    st.textContent = '❌ 실패: ' + e.message; log('Piper 오류: ' + (e.stack || e.message));
+  }
+  $('pLoad').disabled = false;
+};
+$('pVoice').onchange = () => { $('pPlay').disabled = true; $('pSt').textContent = '음성을 바꿨어요 – 준비를 다시 눌러 주세요'; };
+$('pPlay').onclick = async () => {
+  unlock();
+  $('pPlay').disabled = true;
+  try {
+    await readAll('Piper', s => piper.predict({ text: s, voiceId: $('pVoice').value }), $('pSt'));
+  } catch (e) { $('pSt').textContent = '❌ ' + e.message; log('Piper 오류: ' + (e.stack || e.message)); }
+  $('pPlay').disabled = false;
+};
+</script>
+</body>
+</html>
