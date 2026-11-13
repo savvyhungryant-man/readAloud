@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Read Aloud – 1단계 TTS 테스트</title>
+<title>Read Aloud – 2단계 사진 인식</title>
 <style>
   :root {
     --bg: #fffaf0;
@@ -12,6 +12,7 @@
     --muted: #666;
     --primary: #2e7d32;
     --danger: #c62828;
+    --camera: #1565c0;
     --border: #ddd;
   }
   * { box-sizing: border-box; }
@@ -35,7 +36,8 @@
   label { display: block; font-weight: 600; margin-bottom: 8px; }
   textarea {
     width: 100%;
-    min-height: 180px;
+    min-height: 220px;
+    font-family: inherit;
     font-size: 20px;
     line-height: 1.5;
     padding: 12px;
@@ -52,8 +54,12 @@
     background: #fff;
   }
   .buttons { display: flex; gap: 12px; }
-  .buttons button {
+  .big-btn {
     flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
     font-size: 26px;
     font-weight: 700;
     padding: 22px 0;
@@ -61,15 +67,32 @@
     border-radius: 18px;
     color: #fff;
     cursor: pointer;
+    text-align: center;
     touch-action: manipulation; /* 더블탭 확대 방지 */
+    user-select: none;
+    -webkit-user-select: none;
   }
-  #btnSpeak { background: var(--primary); }
-  #btnStop  { background: var(--danger); }
-  .buttons button:active { transform: scale(0.97); }
+  .big-btn:active { transform: scale(0.97); }
+  .big-btn.disabled { opacity: 0.4; pointer-events: none; }
+  #btnSpeak  { background: var(--primary); }
+  #btnStop   { background: var(--danger); }
+  .camera-btn { background: var(--camera); }
+  .album-btn  { background: #fff; color: var(--camera); border: 2px solid var(--camera); font-size: 18px; flex: 0 0 34%; }
+  input[type=file] { display: none; }
+  #preview {
+    display: none;
+    width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    margin-top: 12px;
+    border-radius: 12px;
+    background: #eee;
+  }
+  progress { width: 100%; height: 14px; margin-top: 12px; display: none; }
   input[type=range] { width: 100%; height: 36px; }
   .rate-row { display: flex; justify-content: space-between; color: var(--muted); font-size: 14px; }
   #rateValue { font-size: 22px; font-weight: 700; color: var(--text); }
-  #status { font-size: 16px; color: var(--muted); margin-top: 12px; }
+  .status { font-size: 16px; color: var(--muted); margin-top: 12px; }
   #log {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
@@ -85,19 +108,35 @@
 </head>
 <body>
 <main>
-  <h1>📖 Read Aloud – TTS 테스트</h1>
+  <h1>📖 Read Aloud</h1>
 
+  <!-- ===== 사진 찍기 ===== -->
   <div class="card">
-    <label for="text">읽을 영어 문장</label>
+    <div class="buttons">
+      <!-- label을 누르면 숨겨진 파일 입력이 열림 -->
+      <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
+      <label class="big-btn album-btn"  id="lblAlbum"  for="fileAlbum">🖼 앨범</label>
+    </div>
+    <input id="fileCamera" type="file" accept="image/*" capture="environment">
+    <input id="fileAlbum"  type="file" accept="image/*">
+    <progress id="ocrProgress" max="100" value="0"></progress>
+    <div class="status" id="ocrStatus">책 페이지를 찍어 주세요.</div>
+    <img id="preview" alt="찍은 사진 미리보기">
+  </div>
+
+  <!-- ===== 인식된 글 (수정 가능) ===== -->
+  <div class="card">
+    <label for="text">인식된 글 (틀린 곳은 직접 고칠 수 있어요)</label>
     <textarea id="text">Dink, Josh, and Ruth Rose were sitting on Ruth Rose's front porch. It was a hot summer day. "Let's go to the library," said Josh.</textarea>
   </div>
 
+  <!-- ===== 읽기 / 정지 ===== -->
   <div class="card">
     <div class="buttons">
-      <button id="btnSpeak">▶ 읽기</button>
-      <button id="btnStop">■ 정지</button>
+      <button class="big-btn" id="btnSpeak">▶ 읽기</button>
+      <button class="big-btn" id="btnStop">■ 정지</button>
     </div>
-    <div id="status">준비 중…</div>
+    <div class="status" id="status">준비 중…</div>
   </div>
 
   <div class="card">
@@ -117,8 +156,11 @@
   </details>
 </main>
 
+<!-- Tesseract.js (브라우저 안에서 OCR). 이미지는 밖으로 보내지 않음 -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js"></script>
+
 <script>
-// ===== 0. 화면 요소 참조 =====
+// ===== 0. 화면 요소 참조 / 공통 함수 =====
 const $text   = document.getElementById('text');
 const $voice  = document.getElementById('voice');
 const $rate   = document.getElementById('rate');
@@ -133,35 +175,37 @@ function log(msg) {
 }
 function setStatus(msg) { $status.textContent = msg; }
 
-// 설정 저장/불러오기 (사파리 사생활 모드 등에서 실패해도 동작은 계속)
 function save(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 function load(key)      { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
-  setStatus('❌ 이 브라우저는 음성 읽기를 지원하지 않습니다.');
-  throw new Error('speechSynthesis not supported');
-}
-
-// ===== 1. 영어 음성 목록 불러오기 =====
+// =====================================================================
+//  A. 음성 읽기 (1단계와 동일 + 이상한 음성 숨기기)
+// =====================================================================
 let englishVoices = [];
 
+// iOS/macOS의 효과음·장난용 음성 (아이에게 읽어주기엔 부적합)
+const NOVELTY_VOICES = ['Albert', 'Bad News', 'Bahh', 'Bells', 'Boing', 'Bubbles',
+  'Cellos', 'Good News', 'Jester', 'Organ', 'Superstar', 'Trinoids', 'Whisper',
+  'Wobble', 'Zarvox', 'Fred', 'Junior', 'Kathy', 'Ralph'];
+
 function isEnglish(v) {
-  // 안드로이드 일부 기기는 "en_US"처럼 밑줄을 씀 → 통일해서 비교
   const lang = (v.lang || '').replace('_', '-').toLowerCase();
   return lang === 'en-us' || lang === 'en-gb';
+}
+function isNovelty(v) {
+  return NOVELTY_VOICES.some(n => v.name === n || v.name.startsWith(n + ' '));
 }
 
 function loadVoices() {
   const all = synth.getVoices();
-  if (all.length === 0) return false;           // 아직 준비 안 됨
+  if (all.length === 0) return false;
 
-  englishVoices = all.filter(isEnglish);
-  // en-US 먼저, 그다음 이름순
+  englishVoices = all.filter(v => isEnglish(v) && !isNovelty(v));
   englishVoices.sort((a, b) =>
-    a.lang.localeCompare(b.lang) * -1 || a.name.localeCompare(b.name));
+    b.lang.localeCompare(a.lang) || a.name.localeCompare(b.name));   // en-US 먼저
 
   $voice.innerHTML = '';
-  englishVoices.forEach((v, i) => {
+  englishVoices.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v.voiceURI;
     opt.textContent = `${v.name} (${v.lang})${v.default ? ' ★' : ''}`;
@@ -170,7 +214,7 @@ function loadVoices() {
 
   if (englishVoices.length === 0) {
     $voice.innerHTML = '<option>영어 음성이 없습니다</option>';
-    setStatus('⚠️ 기기에 영어 음성이 없습니다. 설정에서 영어 음성을 설치하세요.');
+    setStatus('⚠️ 기기에 영어 음성이 없습니다.');
   } else {
     const saved = load('voiceURI');
     if (saved && englishVoices.some(v => v.voiceURI === saved)) $voice.value = saved;
@@ -180,64 +224,170 @@ function loadVoices() {
   return true;
 }
 
-// iOS/크롬은 음성 목록이 비동기로 채워짐 → 이벤트 + 안전장치(재시도)
-synth.addEventListener('voiceschanged', () => { log('voiceschanged 이벤트'); loadVoices(); });
-if (!loadVoices()) {
-  let tries = 0;
-  const timer = setInterval(() => {
-    tries++;
-    if (loadVoices() || tries > 20) clearInterval(timer);   // 최대 약 5초
-  }, 250);
+if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+  setStatus('❌ 이 브라우저는 음성 읽기를 지원하지 않습니다.');
+} else {
+  synth.addEventListener('voiceschanged', () => { log('voiceschanged 이벤트'); loadVoices(); });
+  if (!loadVoices()) {
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      if (loadVoices() || tries > 20) clearInterval(timer);
+    }, 250);
+  }
 }
 
 function selectedVoice() {
   return englishVoices.find(v => v.voiceURI === $voice.value) || null;
 }
+$voice.addEventListener('change', () => { save('voiceURI', $voice.value); log(`음성 선택: ${$voice.value}`); });
 
-$voice.addEventListener('change', () => {
-  save('voiceURI', $voice.value);
-  log(`음성 선택: ${$voice.value}`);
-});
-
-// ===== 2. 속도 조절 =====
 const savedRate = load('rate');
 if (savedRate) $rate.value = savedRate;
 $rateV.textContent = Number($rate.value).toFixed(2);
-
 $rate.addEventListener('input', () => {
   $rateV.textContent = Number($rate.value).toFixed(2);
   save('rate', $rate.value);
 });
 
-// ===== 3. 읽기 / 정지 (반드시 사용자 탭에서 바로 호출) =====
 function speak() {
+  if (!synth) return;
   const text = $text.value.trim();
-  if (!text) { setStatus('읽을 문장을 입력하세요.'); return; }
-
-  synth.cancel();                       // 이전 읽기 중단
-
+  if (!text) { setStatus('읽을 글이 없어요.'); return; }
+  synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
   const v = selectedVoice();
   if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
-  u.rate  = Number($rate.value);
-  u.pitch = 1.0;
-
-  u.onstart = () => { setStatus('🔊 읽는 중…'); log(`시작: rate=${u.rate}, voice=${v ? v.name : '기본'}`); };
-  u.onend   = () => { setStatus('✅ 다 읽었어요'); log('끝'); };
-  u.onerror = (e) => { setStatus(`⚠️ 오류: ${e.error}`); log(`오류: ${e.error}`); };
-
-  synth.speak(u);                       // ← 탭 이벤트 안에서 바로 호출해야 iOS가 허용
-  log('speak() 호출');
+  u.rate = Number($rate.value);
+  u.onstart = () => { setStatus('🔊 읽는 중…'); log(`읽기 시작: rate=${u.rate}, voice=${v ? v.name : '기본'}`); };
+  u.onend   = () => { setStatus('✅ 다 읽었어요'); log('읽기 끝'); };
+  u.onerror = (e) => { setStatus(`⚠️ 오류: ${e.error}`); log(`읽기 오류: ${e.error}`); };
+  synth.speak(u);   // 탭 이벤트 안에서 바로 호출 (iOS 필수)
 }
-
-function stop() {
-  synth.cancel();
-  setStatus('⏹ 정지했어요');
-  log('cancel() 호출');
-}
+function stop() { if (synth) synth.cancel(); setStatus('⏹ 정지했어요'); log('정지'); }
 
 document.getElementById('btnSpeak').addEventListener('click', speak);
 document.getElementById('btnStop').addEventListener('click', stop);
+
+// =====================================================================
+//  B. 사진 → 글자 인식 (2단계)
+// =====================================================================
+const $ocrStatus   = document.getElementById('ocrStatus');
+const $ocrProgress = document.getElementById('ocrProgress');
+const $preview     = document.getElementById('preview');
+const $lblCamera   = document.getElementById('lblCamera');
+const $lblAlbum    = document.getElementById('lblAlbum');
+
+const MAX_SIDE = 2000;   // 사진 긴 변을 이 크기로 줄임 (폰 사진은 4000px 이상이라 느리고 메모리 부족 위험)
+let ocrWorker = null;    // Tesseract 작업자. 처음 한 번만 만들고 계속 재사용
+let busy = false;
+
+function setOcrStatus(msg) { $ocrStatus.textContent = msg; }
+function setBusy(b) {
+  busy = b;
+  $lblCamera.classList.toggle('disabled', b);
+  $lblAlbum.classList.toggle('disabled', b);
+  $ocrProgress.style.display = b ? 'block' : 'none';
+}
+
+// (1) Tesseract 작업자 준비 – 처음엔 영어 학습데이터(수 MB)를 내려받아서 시간이 걸림
+async function getWorker() {
+  if (ocrWorker) return ocrWorker;
+  if (typeof Tesseract === 'undefined') throw new Error('Tesseract.js를 불러오지 못했습니다 (인터넷 연결 확인)');
+  setOcrStatus('글자 인식 엔진 준비 중… (처음 한 번만 오래 걸려요)');
+  const t0 = performance.now();
+  // 다운로드 실패 시 무한 대기하지 않도록: 오류 콜백 + 90초 시간 제한
+  ocrWorker = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() =>
+      reject(new Error('엔진 다운로드 시간 초과 – 인터넷 확인 후 다시 찍어 주세요')), 90000);
+    Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        // m.status: 진행 단계 이름, m.progress: 0~1
+        if (typeof m.progress === 'number') $ocrProgress.value = Math.round(m.progress * 100);
+        if (m.status === 'recognizing text') {
+          setOcrStatus(`글자 읽는 중… ${Math.round(m.progress * 100)}%`);
+        }
+      },
+      errorHandler: err => { clearTimeout(timer); reject(new Error('엔진 준비 실패: ' + err)); }
+    }).then(
+      w   => { clearTimeout(timer); resolve(w); },
+      err => { clearTimeout(timer); reject(err); }
+    );
+  });
+  log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
+  return ocrWorker;
+}
+
+// (2) 사진 줄이기 + 흑백 변환 → 인식 속도/정확도 향상
+function prepareImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);   // 기기 메모리 안의 임시 주소 (외부 전송 없음)
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);          // 최신 브라우저는 사진 회전(EXIF)을 자동 반영
+
+      // 흑백 변환 (밝기 = 0.299R + 0.587G + 0.114B)
+      const data = ctx.getImageData(0, 0, w, h);
+      const px = data.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const g = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        px[i] = px[i + 1] = px[i + 2] = g;
+      }
+      ctx.putImageData(data, 0, 0);
+
+      URL.revokeObjectURL(url);
+      log(`사진 크기: ${img.naturalWidth}x${img.naturalHeight} → ${w}x${h}`);
+      resolve(canvas);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('사진을 열 수 없습니다')); };
+    img.src = url;
+  });
+}
+
+// (3) 사진 선택되면 실행되는 전체 흐름
+async function handleFile(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';                 // 같은 사진을 다시 골라도 동작하도록 초기화
+  if (!file || busy) return;
+
+  if (synth) synth.cancel();           // 읽던 것 멈춤
+  setBusy(true);
+  $ocrProgress.value = 0;
+  try {
+    setOcrStatus('사진 준비 중…');
+    const canvas = await prepareImage(file);
+    $preview.src = canvas.toDataURL('image/jpeg', 0.7);   // 화면 미리보기용 (저장 안 함)
+    $preview.style.display = 'block';
+
+    const worker = await getWorker();
+    const t0 = performance.now();
+    const { data } = await worker.recognize(canvas);
+    const sec = ((performance.now() - t0) / 1000).toFixed(1);
+
+    const text = data.text.trim();
+    log(`인식 완료: ${sec}초, 신뢰도 ${Math.round(data.confidence)}%, ${text.length}자`);
+    if (!text) {
+      setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
+    } else {
+      $text.value = text;
+      setOcrStatus(`✅ 인식 완료 (${sec}초, 정확도 약 ${Math.round(data.confidence)}%) – ▶ 읽기를 누르세요`);
+    }
+  } catch (err) {
+    setOcrStatus(`⚠️ 오류: ${err.message}`);
+    log(`OCR 오류: ${err.message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+document.getElementById('fileCamera').addEventListener('change', handleFile);
+document.getElementById('fileAlbum').addEventListener('change', handleFile);
 </script>
 </body>
 </html>
