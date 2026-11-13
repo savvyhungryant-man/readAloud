@@ -428,7 +428,7 @@ function renderSentences() {
       const span = document.createElement('span');
       span.className = 'sent';
       span.textContent = s;
-      span.addEventListener('click', () => speakList([i]));   // 탭 → 그 문장만
+      span.addEventListener('click', () => { if (isRealTap()) speakList([i]); });   // 탭 → 그 문장만
       sentences.push({ text: s, el: span });
       pEl.appendChild(span);
       pEl.appendChild(document.createTextNode(' '));
@@ -439,12 +439,25 @@ function renderSentences() {
   log(`문장 나누기: 문단 ${paras.length}개, 문장 ${sentences.length}개`);
 }
 
+// 스크롤하다 손을 뗀 것을 "탭"으로 오인하지 않도록:
+//  ① 손가락이 10px 넘게 움직였거나 ② 0.4초 이내에 화면이 스크롤됐으면 탭이 아님
+let touchStartY = 0, touchMoved = false, lastScrollAt = 0;
+document.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchMoved = false; }, { passive: true });
+document.addEventListener('touchmove',  e => { if (Math.abs(e.touches[0].clientY - touchStartY) > 10) touchMoved = true; }, { passive: true });
+let autoScrollUntil = 0;   // 읽는 문장을 따라 앱이 스스로 스크롤하는 동안은 사용자 스크롤로 치지 않음
+window.addEventListener('scroll', () => { if (Date.now() > autoScrollUntil) lastScrollAt = Date.now(); }, { passive: true });
+function isRealTap() {
+  if (touchMoved || Date.now() - lastScrollAt < 400) { log('스크롤 중 터치 → 무시'); return false; }
+  return true;
+}
+
 let highlighted = -1;
 function highlight(i) {
   if (highlighted >= 0 && sentences[highlighted]) sentences[highlighted].el.classList.remove('active');
   highlighted = i;
   if (i >= 0 && sentences[i]) {
     sentences[i].el.classList.add('active');
+    autoScrollUntil = Date.now() + 800;
     sentences[i].el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 }
