@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Read Aloud – 2단계 사진 인식</title>
+<title>Read Aloud</title>
 <style>
   :root {
     --bg: #fffaf0;
@@ -13,6 +13,7 @@
     --primary: #2e7d32;
     --danger: #c62828;
     --camera: #1565c0;
+    --highlight: #ffe082;
     --border: #ddd;
   }
   * { box-sizing: border-box; }
@@ -36,9 +37,9 @@
   label { display: block; font-weight: 600; margin-bottom: 8px; }
   textarea {
     width: 100%;
-    min-height: 220px;
+    min-height: 200px;
     font-family: inherit;
-    font-size: 20px;
+    font-size: 18px;
     line-height: 1.5;
     padding: 12px;
     border: 1px solid var(--border);
@@ -82,13 +83,26 @@
   #preview {
     display: none;
     width: 100%;
-    max-height: 240px;
+    max-height: 200px;
     object-fit: contain;
     margin-top: 12px;
     border-radius: 12px;
     background: #eee;
   }
   progress { width: 100%; height: 14px; margin-top: 12px; display: none; }
+
+  /* ===== 문장 보기 ===== */
+  #reader { font-size: 24px; line-height: 1.8; }
+  #reader p { margin: 0 0 16px; }
+  .sent {
+    padding: 2px 2px;
+    border-radius: 6px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sent.active { background: var(--highlight); }
+  .hint { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+
   input[type=range] { width: 100%; height: 36px; }
   .rate-row { display: flex; justify-content: space-between; color: var(--muted); font-size: 14px; }
   #rateValue { font-size: 22px; font-weight: 700; color: var(--text); }
@@ -97,13 +111,14 @@
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
     white-space: pre-wrap;
-    max-height: 200px;
+    max-height: 240px;
     overflow-y: auto;
     background: #f4f4f4;
     padding: 8px;
     border-radius: 8px;
   }
   details summary { cursor: pointer; color: var(--muted); }
+  details[open] summary { margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -113,7 +128,6 @@
   <!-- ===== 사진 찍기 ===== -->
   <div class="card">
     <div class="buttons">
-      <!-- label을 누르면 숨겨진 파일 입력이 열림 -->
       <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
       <label class="big-btn album-btn"  id="lblAlbum"  for="fileAlbum">🖼 앨범</label>
     </div>
@@ -124,12 +138,6 @@
     <img id="preview" alt="찍은 사진 미리보기">
   </div>
 
-  <!-- ===== 인식된 글 (수정 가능) ===== -->
-  <div class="card">
-    <label for="text">인식된 글 (틀린 곳은 직접 고칠 수 있어요)</label>
-    <textarea id="text">Dink, Josh, and Ruth Rose were sitting on Ruth Rose's front porch. It was a hot summer day. "Let's go to the library," said Josh.</textarea>
-  </div>
-
   <!-- ===== 읽기 / 정지 ===== -->
   <div class="card">
     <div class="buttons">
@@ -138,6 +146,21 @@
     </div>
     <div class="status" id="status">준비 중…</div>
   </div>
+
+  <!-- ===== 문장 보기 (탭하면 그 문장만 읽기) ===== -->
+  <div class="card">
+    <div class="hint">👆 문장을 누르면 그 문장만 다시 읽어요</div>
+    <div id="reader"></div>
+  </div>
+
+  <!-- ===== 글 고치기 (평소엔 접어 둠) ===== -->
+  <details class="card">
+    <summary>✏️ 글 고치기</summary>
+    <div class="hint">틀린 글자를 고치면 위 문장 보기에 바로 반영돼요. 빈 줄 = 문단 나눔</div>
+    <textarea id="text">Dink, Josh, and Ruth Rose were sitting on Ruth Rose's front porch. It was a hot summer day. "Let's go to the library," said Josh.
+
+"Who sent this?" asked Josh. Mr. Pocket shook his head.</textarea>
+  </details>
 
   <div class="card">
     <label for="voice">음성 선택</label>
@@ -162,6 +185,7 @@
 <script>
 // ===== 0. 화면 요소 참조 / 공통 함수 =====
 const $text   = document.getElementById('text');
+const $reader = document.getElementById('reader');
 const $voice  = document.getElementById('voice');
 const $rate   = document.getElementById('rate');
 const $rateV  = document.getElementById('rateValue');
@@ -179,7 +203,7 @@ function save(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 function load(key)      { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
 // =====================================================================
-//  A. 음성 읽기 (1단계와 동일 + 이상한 음성 숨기기)
+//  A. 음성 목록
 // =====================================================================
 let englishVoices = [];
 
@@ -195,21 +219,36 @@ function isEnglish(v) {
 function isNovelty(v) {
   return NOVELTY_VOICES.some(n => v.name === n || v.name.startsWith(n + ' '));
 }
+// 음질 등급: iOS는 이름이 같아도 voiceURI에 premium / enhanced / compact 가 붙어 구분됨
+function quality(v) {
+  const s = (v.voiceURI + ' ' + v.name).toLowerCase();
+  if (s.includes('premium'))  return 2;
+  if (s.includes('enhanced')) return 1;
+  return 0;
+}
+const QUALITY_LABEL = ['', ' – 고음질', ' – 프리미엄'];
 
 function loadVoices() {
   const all = synth.getVoices();
   if (all.length === 0) return false;
 
-  englishVoices = all.filter(v => isEnglish(v) && !isNovelty(v));
+  const seen = new Set();
+  englishVoices = all.filter(v => {
+    if (!isEnglish(v) || isNovelty(v) || seen.has(v.voiceURI)) return false;
+    seen.add(v.voiceURI);
+    return true;
+  });
+  // 좋은 음질 먼저 → en-US 먼저 → 이름순
   englishVoices.sort((a, b) =>
-    b.lang.localeCompare(a.lang) || a.name.localeCompare(b.name));   // en-US 먼저
+    quality(b) - quality(a) || b.lang.localeCompare(a.lang) || a.name.localeCompare(b.name));
 
   $voice.innerHTML = '';
   englishVoices.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v.voiceURI;
-    opt.textContent = `${v.name} (${v.lang})${v.default ? ' ★' : ''}`;
+    opt.textContent = `${v.name} (${v.lang})${QUALITY_LABEL[quality(v)]}`;
     $voice.appendChild(opt);
+    log(`음성: ${v.name} | ${v.lang} | ${v.voiceURI}`);
   });
 
   if (englishVoices.length === 0) {
@@ -227,7 +266,7 @@ function loadVoices() {
 if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
   setStatus('❌ 이 브라우저는 음성 읽기를 지원하지 않습니다.');
 } else {
-  synth.addEventListener('voiceschanged', () => { log('voiceschanged 이벤트'); loadVoices(); });
+  synth.addEventListener('voiceschanged', () => loadVoices());
   if (!loadVoices()) {
     let tries = 0;
     const timer = setInterval(() => {
@@ -250,27 +289,188 @@ $rate.addEventListener('input', () => {
   save('rate', $rate.value);
 });
 
-function speak() {
-  if (!synth) return;
-  const text = $text.value.trim();
-  if (!text) { setStatus('읽을 글이 없어요.'); return; }
-  synth.cancel();
+// =====================================================================
+//  B. 글 정리 (3단계) – 쪽번호·머리글 제거, 끊긴 줄 합치기
+// =====================================================================
+
+// 쪽번호만 있는 줄: "41", "- 41 -", "41 |" 등
+function isPageNumber(line) {
+  return /^[^A-Za-z]*\d+[^A-Za-z]*$/.test(line);
+}
+// 머리글/바닥글: 짧고(단어 5개 이하) 문장부호로 끝나지 않는 줄. 예) "View Ridge -", "12 The Absent Author"
+function isHeader(line) {
+  const core = line.replace(/[\s\-–—|_~·•*]+$/, '');     // 끝의 잡기호 떼고 판단
+  const words = core.split(/\s+/).filter(w => /[A-Za-z]/.test(w));
+  return words.length <= 5 && !/[.!?,;:"”’']$/.test(core);
+}
+
+function cleanText(raw) {
+  // (1) 줄 단위 정리
+  let lines = raw.split('\n').map(l => l
+    .replace(/(^|\s)\|(?=\s|$)/g, '$1I')         // 홀로 있는 "|" 는 대개 대문자 I 의 오인식
+    .replace(/(^|\s)[\[\]{}\\\/<>]+(?=\s|$)/g, '$1') // 홀로 있는 괄호·빗금 잡기호
+    .replace(/^(?:[b-hj-z]|\d) (?=[a-z])/, '')    // 줄 맨 앞 외톨이 글자 (a, I 제외): "y nonpartisan" → "nonpartisan"
+    .replace(/^[|_~•·*]+\s*/, '')                 // 줄 앞 잡기호
+    .replace(/\s*[|_~•·*]+$/, '')                 // 줄 끝 잡기호
+    .replace(/\s+/g, ' ')
+    .trim());
+
+  // (2) 쪽번호 줄은 어디 있든 제거, 머리글/바닥글은 페이지 맨 위·아래 2줄 안에서만 제거
+  const filled = lines.map((l, i) => l ? i : -1).filter(i => i >= 0);
+  const edges = new Set([...filled.slice(0, 2), ...filled.slice(-2)]);
+  lines = lines.map((l, i) => {
+    if (!l) return l;
+    if (isPageNumber(l))               { log(`정리: 쪽번호 제거 "${l}"`); return ''; }
+    if (edges.has(i) && isHeader(l))   { log(`정리: 머리글/바닥글 제거 "${l}"`); return ''; }
+    return l;
+  });
+
+  // (3) 줄바꿈으로 끊긴 문장 합치기
+  //     빈 줄(문단 경계)이라도 앞 문장이 . ! ? 로 끝나지 않았으면 문장이 이어지는 것으로 보고 합침
+  const paras = [];
+  let cur = '';
+  for (const l of lines) {
+    if (!l) {
+      if (cur && /[.!?…]["'”’)]*$/.test(cur)) { paras.push(cur); cur = ''; }
+      continue;
+    }
+    if (!cur)                                              cur = l;
+    else if (/[A-Za-z]-$/.test(cur) && /^[a-z]/.test(l))   cur = cur.slice(0, -1) + l;  // "publi-" + "cized"
+    else if (/[—–]$/.test(cur))                            cur += l;                     // 줄 끝 긴 대시
+    else                                                   cur += ' ' + l;
+  }
+  if (cur) paras.push(cur);
+  // 줄을 합친 뒤에 처리: 소문자 단어 사이 외톨이 "1" 은 대개 "I" 의 오인식 ("sisters and 1 were")
+  return paras.map(p => p.replace(/(\b[a-z]+ )1(?= [a-z])/g, '$1I')).join('\n\n');
+}
+
+// =====================================================================
+//  C. 문장 나누기 + 문장 보기 화면
+// =====================================================================
+
+// 마침표가 있어도 문장 끝이 아닌 약어
+const ABBREVIATIONS = /\b(Mr|Mrs|Ms|Dr|St|Jr|Sr|Mt|vs|etc|e\.g|i\.e)\.$/i;
+
+function splitSentences(para) {
+  // 문장부호(. ! ? …) + (닫는 따옴표) + 공백 + 다음이 대문자/숫자/여는 따옴표로 시작하면 문장 끝
+  const re = /[.!?…]+["'”’)\]]*\s+(?=["'“‘(]?[A-Z0-9])/g;
+  const out = [];
+  let start = 0, m;
+  while ((m = re.exec(para))) {
+    const end = m.index + m[0].length;
+    const chunk = para.slice(start, end).trim();
+    const lastWord = chunk.split(' ').pop();
+    if (ABBREVIATIONS.test(chunk) || /^[A-Z]\.$/.test(lastWord)) continue;   // Mr. / J. 같은 경우 계속
+    out.push(chunk);
+    start = end;
+  }
+  const rest = para.slice(start).trim();
+  if (rest) out.push(rest);
+  return out;
+}
+
+let sentences = [];   // [{ text, el }]
+
+function renderSentences() {
+  stopReading(true);
+  $reader.innerHTML = '';
+  sentences = [];
+  const paras = $text.value.split(/\n\s*\n/)
+    .map(p => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  for (const p of paras) {
+    const pEl = document.createElement('p');
+    for (const s of splitSentences(p)) {
+      const i = sentences.length;
+      const span = document.createElement('span');
+      span.className = 'sent';
+      span.textContent = s;
+      span.addEventListener('click', () => speakList([i]));   // 탭 → 그 문장만
+      sentences.push({ text: s, el: span });
+      pEl.appendChild(span);
+      pEl.appendChild(document.createTextNode(' '));
+    }
+    $reader.appendChild(pEl);
+  }
+  if (!sentences.length) $reader.innerHTML = '<p class="hint">읽을 글이 없어요. 사진을 찍어 주세요.</p>';
+  log(`문장 나누기: 문단 ${paras.length}개, 문장 ${sentences.length}개`);
+}
+
+let highlighted = -1;
+function highlight(i) {
+  if (highlighted >= 0 && sentences[highlighted]) sentences[highlighted].el.classList.remove('active');
+  highlighted = i;
+  if (i >= 0 && sentences[i]) {
+    sentences[i].el.classList.add('active');
+    sentences[i].el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+// =====================================================================
+//  D. 문장 단위로 읽기
+// =====================================================================
+let session = 0;      // 읽기 묶음 번호. 정지/새 읽기 때 증가 → 이전 묶음의 늦은 이벤트는 무시
+let liveUtts = [];    // iOS에서 읽는 도중 객체가 사라져 이벤트가 안 오는 문제 방지용 보관
+
+function makeUtterance(text) {
   const u = new SpeechSynthesisUtterance(text);
   const v = selectedVoice();
   if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
   u.rate = Number($rate.value);
-  u.onstart = () => { setStatus('🔊 읽는 중…'); log(`읽기 시작: rate=${u.rate}, voice=${v ? v.name : '기본'}`); };
-  u.onend   = () => { setStatus('✅ 다 읽었어요'); log('읽기 끝'); };
-  u.onerror = (e) => { setStatus(`⚠️ 오류: ${e.error}`); log(`읽기 오류: ${e.error}`); };
-  synth.speak(u);   // 탭 이벤트 안에서 바로 호출 (iOS 필수)
+  return u;
 }
-function stop() { if (synth) synth.cancel(); setStatus('⏹ 정지했어요'); log('정지'); }
 
-document.getElementById('btnSpeak').addEventListener('click', speak);
-document.getElementById('btnStop').addEventListener('click', stop);
+// 여러 문장을 탭한 순간 한꺼번에 대기열에 넣음 → iOS의 "사용자 탭으로만 재생" 제약을 한 번에 통과
+function speakList(indices) {
+  if (!synth || !indices.length) return;
+  synth.cancel();
+  const my = ++session;
+  liveUtts = [];
+  const last = indices[indices.length - 1];
+
+  for (const i of indices) {
+    const u = makeUtterance(sentences[i].text);
+    u.onstart = () => {
+      if (my !== session) return;
+      highlight(i);
+      setStatus(`🔊 읽는 중… (${i + 1} / ${sentences.length})`);
+    };
+    u.onend = () => {
+      if (my !== session || i !== last) return;
+      highlight(-1);
+      setStatus('✅ 다 읽었어요');
+      log('읽기 끝');
+    };
+    u.onerror = (e) => {
+      if (my !== session || e.error === 'interrupted' || e.error === 'canceled') return;
+      setStatus(`⚠️ 오류: ${e.error}`);
+      log(`읽기 오류 (${i + 1}번 문장): ${e.error}`);
+    };
+    liveUtts.push(u);
+    synth.speak(u);
+  }
+  const v = selectedVoice();
+  log(`읽기 시작: ${indices.length}문장, rate=${$rate.value}, voice=${v ? v.name : '기본'}`);
+}
+
+function speakAll() {
+  if (!sentences.length) { setStatus('읽을 글이 없어요.'); return; }
+  speakList(sentences.map((_, i) => i));
+}
+
+function stopReading(silent) {
+  session++;
+  if (synth) synth.cancel();
+  highlight(-1);
+  if (!silent) { setStatus('⏹ 정지했어요'); log('정지'); }
+}
+
+document.getElementById('btnSpeak').addEventListener('click', speakAll);
+document.getElementById('btnStop').addEventListener('click', () => stopReading(false));
+$text.addEventListener('input', renderSentences);     // 글을 고치면 문장 보기 갱신
 
 // =====================================================================
-//  B. 사진 → 글자 인식 (2단계)
+//  E. 사진 → 글자 인식 (2단계)
 // =====================================================================
 const $ocrStatus   = document.getElementById('ocrStatus');
 const $ocrProgress = document.getElementById('ocrProgress');
@@ -278,9 +478,9 @@ const $preview     = document.getElementById('preview');
 const $lblCamera   = document.getElementById('lblCamera');
 const $lblAlbum    = document.getElementById('lblAlbum');
 
-const MAX_SIDE = 3000;   // 사진 긴 변을 이 크기로 줄임 (작은 글씨도 읽히게 하되, iPhone 메모리 한도는 넘지 않게)
+const MAX_SIDE = 3000;    // 사진 긴 변을 이 크기로 줄임 (작은 글씨도 읽히게 하되, iPhone 메모리 한도는 넘지 않게)
 const MIN_LINE_CONF = 60; // 이 신뢰도(%) 미만인 줄은 그림·뒷면 비침 등 잡음으로 보고 버림
-let ocrWorker = null;    // Tesseract 작업자. 처음 한 번만 만들고 계속 재사용
+let ocrWorker = null;
 let busy = false;
 
 function setOcrStatus(msg) { $ocrStatus.textContent = msg; }
@@ -291,19 +491,16 @@ function setBusy(b) {
   $ocrProgress.style.display = b ? 'block' : 'none';
 }
 
-// (1) Tesseract 작업자 준비 – 처음엔 영어 학습데이터(수 MB)를 내려받아서 시간이 걸림
 async function getWorker() {
   if (ocrWorker) return ocrWorker;
   if (typeof Tesseract === 'undefined') throw new Error('Tesseract.js를 불러오지 못했습니다 (인터넷 연결 확인)');
   setOcrStatus('글자 인식 엔진 준비 중… (처음 한 번만 오래 걸려요)');
   const t0 = performance.now();
-  // 다운로드 실패 시 무한 대기하지 않도록: 오류 콜백 + 90초 시간 제한
   ocrWorker = await new Promise((resolve, reject) => {
     const timer = setTimeout(() =>
       reject(new Error('엔진 다운로드 시간 초과 – 인터넷 확인 후 다시 찍어 주세요')), 90000);
     Tesseract.createWorker('eng', 1, {
       logger: m => {
-        // m.status: 진행 단계 이름, m.progress: 0~1
         if (typeof m.progress === 'number') $ocrProgress.value = Math.round(m.progress * 100);
         if (m.status === 'recognizing text') {
           setOcrStatus(`글자 읽는 중… ${Math.round(m.progress * 100)}%`);
@@ -319,10 +516,9 @@ async function getWorker() {
   return ocrWorker;
 }
 
-// (2) 사진 줄이기 + 흑백 변환 → 인식 속도/정확도 향상
 function prepareImage(file) {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);   // 기기 메모리 안의 임시 주소 (외부 전송 없음)
+    const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
@@ -331,9 +527,8 @@ function prepareImage(file) {
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);          // 최신 브라우저는 사진 회전(EXIF)을 자동 반영
+      ctx.drawImage(img, 0, 0, w, h);
 
-      // 흑백 변환 (밝기 = 0.299R + 0.587G + 0.114B)
       const data = ctx.getImageData(0, 0, w, h);
       const px = data.data;
       for (let i = 0; i < px.length; i += 4) {
@@ -351,57 +546,89 @@ function prepareImage(file) {
   });
 }
 
-// (3) 잡음 줄 걸러내기: 신뢰도가 낮거나 글자보다 기호가 많은 줄은 버림
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+// 줄 정리:
+//  ① 본문 칸 바깥(왼쪽·오른쪽 여백)에 붙은 잡글자 제거 – 옆 페이지 글씨, 책 가장자리 그림자 등
+//  ② 신뢰도가 낮거나 글자보다 기호가 많은 줄은 버림
+//  결과: 줄마다 한 줄씩, 엔진이 문단 시작이라고 본 곳 앞에는 빈 줄
 function filterLines(data) {
-  if (!data.blocks) return data.text.trim();          // 혹시 줄 정보가 없으면 원문 그대로
-  const paragraphs = [];
+  if (!data.blocks) return data.text.trim();
+
+  const lines = [];
+  for (const block of data.blocks)
+    for (const para of block.paragraphs)
+      para.lines.forEach((line, k) => { if (line.words.length) lines.push({ line, paraStart: k === 0 }); });
+
+  // 본문 칸의 왼쪽/오른쪽 경계 = 확실한 단어(신뢰도 80↑, 3글자↑)들의 줄 시작·끝 위치의 중앙값
+  const good = w => w.confidence >= 80 && /[A-Za-z]{3}/.test(w.text);
+  const lefts = [], rights = [];
+  for (const { line } of lines) {
+    const g = line.words.filter(good);
+    if (g.length) { lefts.push(g[0].bbox.x0); rights.push(g[g.length - 1].bbox.x1); }
+  }
+  const leftEdge = median(lefts), rightEdge = median(rights);
+
+  const out = [];
   let dropped = 0;
-  for (const block of data.blocks) {
-    for (const para of block.paragraphs) {
-      const kept = [];
-      for (const line of para.lines) {
-        const t = line.text.trim();
-        if (!t) continue;
-        const chars   = t.replace(/\s/g, '').length;
-        const letters = (t.match(/[A-Za-z]/g) || []).length;
-        const ok = line.confidence >= MIN_LINE_CONF && letters / chars >= 0.5;
-        if (ok) kept.push(t);
-        else { dropped++; log(`버린 줄 (${Math.round(line.confidence)}%): ${t}`); }
-      }
-      if (kept.length) paragraphs.push(kept.join('\n'));
+  for (const { line, paraStart } of lines) {
+    const h = line.bbox.y1 - line.bbox.y0;
+    let words = [...line.words];
+    // 본문 칸보다 완전히 바깥에 있고, 본문과 크게 떨어져 있는 단어 무리는 잡글자
+    let a = 0;
+    while (a < words.length && words[a].bbox.x1 < leftEdge - 0.3 * h) a++;
+    if (a > 0 && a < words.length && words[a].bbox.x0 - words[a - 1].bbox.x1 > 0.4 * h) words = words.slice(a);
+    let b = words.length;
+    while (b > 0 && words[b - 1].bbox.x0 > rightEdge + 0.3 * h) b--;
+    if (b > 0 && b < words.length && words[b].bbox.x0 - words[b - 1].bbox.x1 > 0.4 * h) words = words.slice(0, b);
+    if (!words.length) continue;
+
+    const t = words.map(w => w.text).join(' ');
+    const conf = words.reduce((s, w) => s + w.confidence, 0) / words.length;
+    const chars   = t.replace(/\s/g, '').length;
+    const letters = (t.match(/[A-Za-z]/g) || []).length;
+    if (conf >= MIN_LINE_CONF && letters / chars >= 0.5) {
+      if (paraStart && out.length) out.push('');
+      out.push(t);
+    } else {
+      dropped++;
+      log(`버린 줄 (${Math.round(conf)}%): ${t}`);
     }
   }
   log(`줄 필터: ${dropped}줄 버림`);
-  return paragraphs.join('\n\n');
+  return out.join('\n');
 }
 
-// (4) 사진 선택되면 실행되는 전체 흐름
 async function handleFile(e) {
   const file = e.target.files && e.target.files[0];
-  e.target.value = '';                 // 같은 사진을 다시 골라도 동작하도록 초기화
+  e.target.value = '';
   if (!file || busy) return;
 
-  if (synth) synth.cancel();           // 읽던 것 멈춤
+  stopReading(true);
   setBusy(true);
   $ocrProgress.value = 0;
   try {
     setOcrStatus('사진 준비 중…');
     const canvas = await prepareImage(file);
-    $preview.src = canvas.toDataURL('image/jpeg', 0.7);   // 화면 미리보기용 (저장 안 함)
+    $preview.src = canvas.toDataURL('image/jpeg', 0.7);
     $preview.style.display = 'block';
 
     const worker = await getWorker();
     const t0 = performance.now();
-    // blocks: true → 문단/줄 단위 결과와 줄별 신뢰도까지 받음
     const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
     const sec = ((performance.now() - t0) / 1000).toFixed(1);
 
-    const text = filterLines(data);
+    const text = cleanText(filterLines(data));   // ← 3단계: 인식 결과 정리
     log(`인식 완료: ${sec}초, 신뢰도 ${Math.round(data.confidence)}%, ${text.length}자`);
     if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
     } else {
       $text.value = text;
+      renderSentences();
       setOcrStatus(`✅ 인식 완료 (${sec}초, 정확도 약 ${Math.round(data.confidence)}%) – ▶ 읽기를 누르세요`);
     }
   } catch (err) {
@@ -414,6 +641,8 @@ async function handleFile(e) {
 
 document.getElementById('fileCamera').addEventListener('change', handleFile);
 document.getElementById('fileAlbum').addEventListener('change', handleFile);
+
+renderSentences();   // 처음 예시 글도 문장 보기로 표시
 </script>
 </body>
 </html>
