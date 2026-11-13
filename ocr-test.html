@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OCR 시험</title>
+<style>
+  body { margin: 0; padding: 16px; background: #fffaf0; color: #222;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 17px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+  .buttons { display: flex; gap: 12px; }
+  .btn { flex: 1; text-align: center; font-size: 22px; font-weight: 700; padding: 18px 0; border-radius: 16px;
+         background: #1565c0; color: #fff; touch-action: manipulation; }
+  .btn.alt { background: #fff; color: #1565c0; border: 2px solid #1565c0; font-size: 18px; flex: 0 0 34%; }
+  .btn.disabled { opacity: .4; pointer-events: none; }
+  input[type=file] { display: none; }
+  select { font-size: 16px; padding: 8px; border-radius: 10px; margin-top: 12px; }
+  #status { margin-top: 12px; color: #555; }
+  canvas { width: 100%; border-radius: 12px; margin-top: 12px; display: none; }
+  #text { white-space: pre-wrap; font-size: 18px; line-height: 1.6; }
+  #lines { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; color: #444; }
+  .low { color: #c62828; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔬 글자 인식 시험 (PaddleOCR)</h1>
+  <div class="card">
+    <div class="buttons">
+      <label class="btn disabled" id="lblCam" for="cam">📷 찍기</label>
+      <label class="btn alt disabled" id="lblAlb" for="alb">🖼 앨범</label>
+    </div>
+    <input id="cam" type="file" accept="image/*" capture="environment">
+    <input id="alb" type="file" accept="image/*">
+    <label>글자 찾기 해상도
+      <select id="side">
+        <option value="960">960 (빠름)</option>
+        <option value="1280" selected>1280 (기본)</option>
+        <option value="1600">1600 (정밀)</option>
+      </select>
+    </label>
+    <div id="status">엔진 준비 중… (처음엔 약 30MB를 받아요)</div>
+    <canvas id="view"></canvas>
+  </div>
+  <div class="card"><b>인식 결과</b><div id="text"></div></div>
+  <div class="card"><b>줄별 상세</b> (왼쪽 위치, 확신도%)<div id="lines"></div></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.wasm.min.js"></script>
+<script type="module">
+import { createOcr, recognize, linesToText } from './paddle-ocr.js?v=1';
+
+const $ = id => document.getElementById(id);
+const status = m => { $('status').textContent = m; };
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
+ort.env.wasm.numThreads = 1;   // GitHub Pages에서는 다중 스레드를 못 씀
+
+let ocr = null, busy = false;
+try {
+  const t0 = performance.now();
+  ocr = await createOcr(ort, { onProgress: status });
+  status(`✅ 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초) – 책을 찍어 주세요`);
+  $('lblCam').classList.remove('disabled'); $('lblAlb').classList.remove('disabled');
+} catch (e) {
+  status('❌ 엔진 준비 실패: ' + e.message);
+}
+
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('사진을 열 수 없어요')); };
+    img.src = url;
+  });
+}
+
+async function run(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file || !ocr || busy) return;
+  busy = true;
+  $('lblCam').classList.add('disabled'); $('lblAlb').classList.add('disabled');
+  try {
+    status('사진 준비 중…');
+    const img = await loadImage(file);
+    const s = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = $('view');
+    cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    const data = ctx.getImageData(0, 0, cv.width, cv.height);
+    cv.style.display = 'block';
+
+    status('글자 읽는 중…');
+    await new Promise(r => setTimeout(r, 50));   // 상태 문구가 화면에 그려지도록 잠깐 양보
+    const r = await recognize(ocr, data, { detMaxSide: Number($('side').value) });
+
+    // 찾은 줄 위치를 사진 위에 표시
+    ctx.lineWidth = 3;
+    for (const l of r.lines) {
+      ctx.save(); ctx.translate(l.cx, l.cy); ctx.rotate(l.ang);
+      ctx.strokeStyle = l.score >= 0.8 ? '#2e7d32' : '#c62828';
+      ctx.strokeRect(-l.w / 2, -l.h / 2, l.w, l.h); ctx.restore();
+    }
+    $('text').textContent = linesToText(r.lines);
+    $('lines').innerHTML = r.lines.map(l =>
+      `<div class="${l.score < 0.8 ? 'low' : ''}">${Math.round(l.left)} ${Math.round(l.score * 100)}% | ${l.text.replace(/</g, '&lt;')}</div>`).join('');
+    status(`✅ 완료: ${r.lines.length}줄 · 찾기 ${(r.detMs / 1000).toFixed(1)}초 + 읽기 ${(r.recMs / 1000).toFixed(1)}초`);
+  } catch (err) {
+    status('⚠️ 오류: ' + err.message);
+  } finally {
+    busy = false;
+    $('lblCam').classList.remove('disabled'); $('lblAlb').classList.remove('disabled');
+  }
+}
+$('cam').addEventListener('change', run);
+$('alb').addEventListener('change', run);
+</script>
+</body>
+</html>
