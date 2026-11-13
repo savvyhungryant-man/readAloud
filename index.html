@@ -119,7 +119,7 @@
   }
   .seg { display: flex; gap: 8px; margin-bottom: 12px; }
   .seg button {
-    flex: 1; font-size: 18px; font-weight: 700; padding: 14px 0;
+    flex: 1; font-size: 16px; font-weight: 700; padding: 14px 0; white-space: nowrap;
     border-radius: 12px; border: 2px solid var(--camera); background: #fff; color: var(--camera);
     touch-action: manipulation;
   }
@@ -182,10 +182,25 @@
     <div class="seg">
       <button id="engDevice" data-engine="device">📱 기기 음성</button>
       <button id="engAi"     data-engine="ai">✨ AI 음성</button>
+      <button id="engPiper"  data-engine="piper">🆓 Piper</button>
     </div>
 
     <div id="deviceBox">
       <select id="voice"><option>음성 불러오는 중…</option></select>
+    </div>
+
+    <div id="piperBox" style="display:none">
+      <select id="piperVoice">
+        <option value="en_US-amy-medium">Amy (여성) – 추천</option>
+        <option value="en_US-hfc_female-medium">HFC (여성)</option>
+        <option value="en_US-lessac-medium">Lessac (여성)</option>
+        <option value="en_US-kristin-medium">Kristin (여성)</option>
+        <option value="en_GB-alba-medium">Alba (영국 여성)</option>
+        <option value="en_US-ryan-medium">Ryan (남성)</option>
+        <option value="en_US-joe-medium">Joe (남성)</option>
+      </select>
+      <div class="hint" style="margin-top:8px">무료 · 이 기기 안에서 음성을 만들어요. 음성마다 처음 한 번 약 60MB를 받아 기기에 보관해요.</div>
+      <div class="hint" id="piperInfo" style="margin-top:4px"></div>
     </div>
 
     <div id="aiBox" style="display:none">
@@ -260,8 +275,7 @@ const NOVELTY_VOICES = ['Albert', 'Bad News', 'Bahh', 'Bells', 'Boing', 'Bubbles
   'Wobble', 'Zarvox', 'Fred', 'Junior', 'Kathy', 'Ralph'];
 
 function isEnglish(v) {
-  const lang = (v.lang || '').replace('_', '-').toLowerCase();
-  return lang === 'en-us' || lang === 'en-gb';
+  return (v.lang || '').replace('_', '-').toLowerCase().startsWith('en');
 }
 function isNovelty(v) {
   return NOVELTY_VOICES.some(n => v.name === n || v.name.startsWith(n + ' '));
@@ -271,32 +285,32 @@ function quality(v) {
   const s = (v.voiceURI + ' ' + v.name).toLowerCase();
   if (s.includes('premium'))  return 2;
   if (s.includes('enhanced')) return 1;
+  if (s.includes('super-compact')) return -1;
   return 0;
 }
-const QUALITY_LABEL = ['', ' – 고음질', ' – 프리미엄'];
+const QUALITY_LABEL = { '-1': ' – 저음질', 0: '', 1: ' – 고음질', 2: ' – 프리미엄' };
 
 function loadVoices() {
   const all = synth.getVoices();
   if (all.length === 0) return false;
 
-  // 진단용: 기기가 알려준 음성 전체 (필터 전)
-  log(`[전체 음성 ${all.length}개] ` + all.map(v => `${v.name}/${v.lang}${/premium|enhanced/i.test(v.voiceURI) ? '/' + (/premium/i.test(v.voiceURI) ? 'P' : 'E') : ''}`).join(', '));
-
   const seen = new Set();
   englishVoices = all.filter(v => {
-    if (!isEnglish(v) || isNovelty(v) || seen.has(v.voiceURI)) return false;
+    if (!isEnglish(v) || seen.has(v.voiceURI)) return false;
     seen.add(v.voiceURI);
     return true;
   });
-  // 좋은 음질 먼저 → en-US 먼저 → 이름순
+  // 효과음 음성은 맨 아래 → 좋은 음질 먼저 → en-US 먼저 → 이름순
+  const order = l => l === 'en-US' ? 0 : l === 'en-GB' ? 1 : 2;
   englishVoices.sort((a, b) =>
-    quality(b) - quality(a) || b.lang.localeCompare(a.lang) || a.name.localeCompare(b.name));
+    isNovelty(a) - isNovelty(b) || quality(b) - quality(a) ||
+    order(a.lang) - order(b.lang) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
 
   $voice.innerHTML = '';
   englishVoices.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v.voiceURI;
-    opt.textContent = `${v.name} (${v.lang})${QUALITY_LABEL[quality(v)]}`;
+    opt.textContent = `${v.name} (${v.lang})${QUALITY_LABEL[quality(v)]}${isNovelty(v) ? ' – 효과음' : ''}`;
     $voice.appendChild(opt);
     log(`음성: ${v.name} | ${v.lang} | ${v.voiceURI}`);
   });
@@ -491,8 +505,8 @@ function makeUtterance(text) {
 // 읽기 진입점: 선택한 음성 종류에 따라 기기 음성 / AI 음성으로 나눔
 function speakList(indices) {
   if (!indices.length) return;
-  if (engine === 'ai') aiSpeakList(indices);
-  else                 deviceSpeakList(indices);
+  if (engine === 'device') deviceSpeakList(indices);
+  else                     audioSpeakList(indices);   // AI / Piper: 음성 파일을 만들어 재생
 }
 
 // [기기 음성] 여러 문장을 탭한 순간 한꺼번에 대기열에 넣음 → iOS의 "사용자 탭으로만 재생" 제약을 한 번에 통과
@@ -559,19 +573,21 @@ const aiCache = new Map();            // "음성|문장" → mp3 주소(Promise)
 const PREFETCH = 3;                   // 재생하는 동안 몇 문장 앞까지 미리 받아 둘지
 
 // --- 음성 종류 선택 (기기 / AI)
-let engine = load('engine') === 'ai' ? 'ai' : 'device';
+let engine = ['ai', 'piper'].includes(load('engine')) ? load('engine') : 'device';
 function setEngine(e) {
   engine = e;
   save('engine', e);
-  document.getElementById('engDevice').classList.toggle('on', e === 'device');
-  document.getElementById('engAi').classList.toggle('on', e === 'ai');
-  document.getElementById('deviceBox').style.display = e === 'device' ? '' : 'none';
-  document.getElementById('aiBox').style.display     = e === 'ai'     ? '' : 'none';
+  for (const [btn, box, name] of [['engDevice', 'deviceBox', 'device'], ['engAi', 'aiBox', 'ai'], ['engPiper', 'piperBox', 'piper']]) {
+    document.getElementById(btn).classList.toggle('on', e === name);
+    document.getElementById(box).style.display = e === name ? '' : 'none';
+  }
   updateRateLabel();
   stopReading(true);
+  if (e === 'piper') preparePiper();   // 고르자마자 음성 모델 준비 시작
 }
 document.getElementById('engDevice').addEventListener('click', () => setEngine('device'));
 document.getElementById('engAi').addEventListener('click', () => setEngine('ai'));
+document.getElementById('engPiper').addEventListener('click', () => setEngine('piper'));
 
 $aiVoice.value    = load('aiVoice') || 'coral';
 $aiPassword.value = load('aiPassword') || '';
@@ -783,14 +799,16 @@ function fetchAudio(text) {
 }
 
 // --- mp3 한 개 재생하고 끝날 때까지 기다리기
-function playUrl(url) {
+function playUrl(url, rate = 1) {
   return new Promise((resolve, reject) => {
     audioDone = resolve;
     audio.onended = () => resolve();
     audio.onerror = () => reject(new Error('음성 재생 실패'));
     audio.src = url;
-    audio.defaultPlaybackRate = 1;     // AI 음성은 원래 속도로 재생 (빠르기는 AI가 말할 때 조절)
-    audio.playbackRate = 1;
+    // AI 음성은 원래 속도(빠르기는 AI가 말할 때 조절). Piper는 빠르기 조절 기능이 없어 재생 속도로 조절
+    audio.preservesPitch = true;
+    audio.defaultPlaybackRate = rate;
+    audio.playbackRate = rate;
     audio.play().catch(reject);
   });
 }
@@ -801,31 +819,36 @@ function stopAudio() {
 }
 
 // --- 여러 문장을 차례로: 받기 → 재생, 재생하는 동안 다음 문장을 미리 받아 둠
-async function aiSpeakList(indices) {
-  if (!$aiPassword.value.trim()) { setStatus('🔑 AI 음성 비밀번호를 먼저 입력하세요'); $aiPassword.focus(); return; }
+async function audioSpeakList(indices) {
+  const isAi = engine === 'ai';
+  if (isAi && !$aiPassword.value.trim()) { setStatus('🔑 AI 음성 비밀번호를 먼저 입력하세요'); $aiPassword.focus(); return; }
   stopReading(true);
   const my = session;
   unlockAudio();                       // ← 탭 순간에 바로 실행되어야 함 (await 전에)
-  log(`AI 읽기 시작: ${indices.length}문장, voice=${$aiVoice.value}, 속도=${$rate.value}`);
+  const getUrl   = isAi ? fetchAudio : piperAudio;
+  const ahead    = isAi ? PREFETCH : PIPER_PREFETCH;
+  const playRate = isAi ? 1 : Number($rate.value);
+  const name     = isAi ? 'AI' : 'Piper';
+  log(`${name} 읽기 시작: ${indices.length}문장, voice=${isAi ? $aiVoice.value : $piperVoice.value}, 속도=${$rate.value}`);
 
   for (let k = 0; k < indices.length; k++) {
     const i = indices[k];
     let url;
     try {
       setStatus(`⏳ 음성 준비 중… (${i + 1} / ${sentences.length})`);
-      url = await fetchAudio(sentences[i].text);
+      url = await getUrl(sentences[i].text);
     } catch (e) {
-      if (my === session) { highlight(-1); setStatus(`⚠️ ${e.message}`); log(`AI 오류: ${e.message}`); }
+      if (my === session) { highlight(-1); setStatus(`⚠️ ${e.message}`); log(`${name} 오류: ${e.message}`); }
       return;
     }
     if (my !== session) return;                                   // 그 사이 정지/다른 문장 선택됨
     // 다음 3문장 미리 받기 (짧은 문장은 재생이 1초 안팎이라, 1문장만 미리 받으면 받는 시간 2초를 못 가림)
-    for (let j = k + 1; j < Math.min(k + 1 + PREFETCH, indices.length); j++)
-      fetchAudio(sentences[indices[j]].text).catch(() => {});
+    for (let j = k + 1; j < Math.min(k + 1 + ahead, indices.length); j++)
+      getUrl(sentences[indices[j]].text).catch(() => {});
 
     highlight(i);
     setStatus(`🔊 읽는 중… (${i + 1} / ${sentences.length})`);
-    try { await playUrl(url); }
+    try { await playUrl(url, playRate); }
     catch (e) {
       if (my === session) { highlight(-1); setStatus(`⚠️ ${e.message}`); log(`재생 오류: ${e.message}`); }
       return;
@@ -834,8 +857,75 @@ async function aiSpeakList(indices) {
   }
   highlight(-1);
   setStatus('✅ 다 읽었어요');
-  log('AI 읽기 끝');
+  log(`${name} 읽기 끝`);
 }
+
+// =====================================================================
+//  H. Piper 음성 (무료, 기기 안에서 만듦)
+//     첫 사용 때 음성 모델(약 60MB)을 받아 기기 저장소(OPFS)에 보관 → 다음부터는 바로
+// =====================================================================
+const PIPER_LIB = 'https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/+esm';
+const PIPER_PREFETCH = 2;              // 만들기가 빨라서 2문장만 미리 만들어도 충분
+const $piperVoice = document.getElementById('piperVoice');
+const $piperInfo  = document.getElementById('piperInfo');
+const piperCache  = new Map();         // "음성|문장" → 음성 주소(Promise)
+let piperLib = null;
+let piperReady = {};                   // 음성별 준비 Promise
+let piperQueue = Promise.resolve();    // 한 번에 한 문장씩만 만들도록 줄 세우기 (동시에 만들면 메모리 부담)
+
+$piperVoice.value = load('piperVoice') || 'en_US-amy-medium';
+$piperVoice.addEventListener('change', () => { save('piperVoice', $piperVoice.value); stopReading(true); preparePiper(); });
+
+function preparePiper() {
+  const voice = $piperVoice.value;
+  if (!piperReady[voice]) {
+    piperReady[voice] = (async () => {
+      const t0 = performance.now();
+      $piperInfo.textContent = '⏳ 준비 중…';
+      piperLib = piperLib || await import(PIPER_LIB);
+      const stored = await piperLib.stored().catch(() => []);
+      if (!stored.includes(voice)) {
+        let last = -1;
+        await piperLib.download(voice, p => {
+          if (!p.total) return;
+          const pct = Math.round(p.loaded / p.total * 100);
+          if (pct !== last) { last = pct; $piperInfo.textContent = `⏳ 음성 모델 받는 중… ${pct}% (처음 한 번만)`; }
+        });
+      }
+      $piperInfo.textContent = '✅ 준비 완료';
+      log(`Piper ${voice} 준비 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
+    })();
+    piperReady[voice].catch(e => {
+      delete piperReady[voice];
+      $piperInfo.textContent = `⚠️ 준비 실패: ${e.message}`;
+      log(`Piper 준비 실패: ${e.message}`);
+    });
+  }
+  return piperReady[voice];
+}
+
+function piperAudio(text) {
+  const voice = $piperVoice.value;
+  const key = `${voice}|${normText(text)}`;
+  if (!piperCache.has(key)) {
+    const p = (async () => {
+      await preparePiper();
+      const job = piperQueue.then(async () => {
+        const t0 = performance.now();
+        const wav = await piperLib.predict({ text, voiceId: voice });
+        log(`Piper 음성 만듦 (${((performance.now() - t0) / 1000).toFixed(1)}초): ${text.slice(0, 30)}…`);
+        return URL.createObjectURL(wav);
+      });
+      piperQueue = job.catch(() => {});
+      return job;
+    })();
+    p.catch(() => piperCache.delete(key));
+    piperCache.set(key, p);
+  }
+  return piperCache.get(key);
+}
+
+setEngine(engine);   // 저장된 음성 종류로 시작 (Piper 부분까지 정의된 뒤에 호출)
 
 // --- 들어보기 버튼: 비밀번호·연결 확인용 짧은 문장
 document.getElementById('aiTest').addEventListener('click', async () => {
@@ -855,7 +945,6 @@ document.getElementById('aiTest').addEventListener('click', async () => {
   }
 });
 
-setEngine(engine);
 
 // =====================================================================
 //  E. 사진 → 글자 인식 – PaddleOCR (paddle-ocr.js)
