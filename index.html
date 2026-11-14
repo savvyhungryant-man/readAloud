@@ -249,8 +249,8 @@
 
   <div class="card">
     <label for="rate">읽기 속도: <span id="rateValue">0.85</span></label>
-    <input id="rate" type="range" min="0.6" max="1.0" step="0.05" value="0.85">
-    <div class="rate-row"><span>천천히 0.6</span><span>보통 1.0</span></div>
+    <input id="rate" type="range" min="0.6" max="1.5" step="0.05" value="0.85">
+    <div class="rate-row"><span>천천히 0.6</span><span>보통 1.0</span><span>빠르게 1.5</span></div>
   </div>
 
   <details class="card">
@@ -363,15 +363,18 @@ function selectedVoice() {
 }
 $voice.addEventListener('change', () => { save('voiceURI', $voice.value); log(`음성 선택: ${$voice.value}`); });
 
-const savedRate = load('rate');
-if (savedRate) $rate.value = savedRate;
+// 음성 종류마다 속도를 따로 기억 (Piper Amy는 원래 말이 느린 편이라 기본을 조금 빠르게)
+const DEFAULT_RATE = { device: '0.85', piper: '1.15', ai: '1.0' };
+function loadRateFor(e) { $rate.value = load('rate_' + e) || (e === 'device' && load('rate')) || DEFAULT_RATE[e]; }
 function updateRateLabel() {
   const v = Number($rate.value).toFixed(2);
   $rateV.textContent = engine === 'ai' ? `${v} (AI: ${PACE_LABEL[aiPace()]})` : v;
 }
 $rate.addEventListener('input', () => {
   updateRateLabel();
-  save('rate', $rate.value);
+  save('rate_' + engine, $rate.value);
+  // Piper는 재생 속도로 조절하므로 읽는 도중에도 바로 반영
+  if (engine === 'piper') { audio.defaultPlaybackRate = Number($rate.value); audio.playbackRate = Number($rate.value); }
 });
 
 // =====================================================================
@@ -606,6 +609,7 @@ function setEngine(e) {
     document.getElementById(btn).classList.toggle('on', e === name);
     document.getElementById(box).style.display = e === name ? '' : 'none';
   }
+  loadRateFor(e);
   updateRateLabel();
   stopReading(true);
   if (e === 'piper') preparePiper();   // 고르자마자 음성 모델 준비 시작
