@@ -26,6 +26,20 @@
     font-size: 18px;
   }
   main { max-width: 760px; margin: 0 auto; }
+  .col-left, .col-right { display: flex; flex-direction: column; }
+  /* 아이패드 가로 등 넓은 화면: 왼쪽 = 카메라(+음성 설정), 오른쪽 = 읽은 글 */
+  @media (min-width: 1000px) and (orientation: landscape) {
+    main { max-width: none; }
+    h1 { font-size: 20px; margin-bottom: 8px; }
+    .cols { display: flex; gap: 16px; align-items: flex-start; }
+    .col-left {
+      flex: 0 0 46%; position: sticky; top: 16px;
+      max-height: calc(100vh - 32px); overflow-y: auto;   /* 오른쪽 글을 내려도 카메라는 그대로 */
+    }
+    .col-right { flex: 1; min-width: 0; }
+    #cardCamera { order: -1; }                           /* 왼쪽 맨 위에 카메라 */
+    #liveVideo { max-height: 62vh; }
+  }
   h1 { font-size: 24px; margin: 0 0 12px; }
   .card {
     background: var(--card);
@@ -145,7 +159,9 @@
 <body>
 <main>
   <h1>📖 Read Aloud</h1>
-  <div class="card">
+  <div class="cols">
+  <div class="col-left">
+  <div class="card" id="cardVoice">
     <label>음성 종류</label>
     <div class="seg">
       <button id="engDevice" data-engine="device">📱 기기 음성</button>
@@ -199,7 +215,7 @@
 
 
   <!-- ===== 사진 찍기 ===== -->
-  <div class="card">
+  <div class="card" id="cardCamera">
     <!-- 앱 안 카메라: 미리보기를 띄워 두고 버튼 한 번으로 찍고 바로 읽기 -->
     <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
     <div id="liveBox">
@@ -223,6 +239,8 @@
     <img id="preview" alt="찍은 사진 미리보기">
   </div>
 
+  </div><!-- /col-left -->
+  <div class="col-right">
   <!-- ===== 읽기 / 정지 ===== -->
   <div class="card">
     <div class="buttons">
@@ -257,6 +275,8 @@
     <summary>디버그 로그</summary>
     <div id="log"></div>
   </details>
+  </div><!-- /col-right -->
+  </div><!-- /cols -->
 </main>
 
 <!-- ONNX Runtime (브라우저 안에서 PaddleOCR 모델 실행). 사진은 밖으로 보내지 않음 -->
