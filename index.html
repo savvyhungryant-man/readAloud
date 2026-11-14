@@ -1139,6 +1139,7 @@ let liveStream = null;
 
 async function startLive() {
   primeAutoRead();                       // 버튼 누른 순간 → 소리 허용도 같이 받아 둠
+  liveIdleSince = performance.now();
   if (liveStream) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setOcrStatus('⚠️ 이 브라우저는 앱 안 카메라를 지원하지 않아요. 📷 사진 찍기를 써 주세요.');
@@ -1201,6 +1202,9 @@ const $autoTurn = document.getElementById('autoTurn');
 $autoTurn.checked = load('autoTurn') !== '0';
 $autoTurn.addEventListener('change', () => save('autoTurn', $autoTurn.checked ? '1' : '0'));
 let autoChecking = false, autoCandidate = null, autoNextAt = 0, autoLastState = '';
+// 배터리·발열 보호: 읽기가 끝난 뒤 10초 동안 새 페이지가 없으면 카메라를 끔
+const LIVE_IDLE_MS = 10000;
+let liveIdleSince = performance.now();
 
 function isSamePage(a, b) {
   const x = normText(a).slice(0, 80), y = normText(b).slice(0, 80);
@@ -1208,7 +1212,16 @@ function isSamePage(a, b) {
 }
 
 setInterval(async () => {
-  if (!liveStream || !$autoTurn.checked || engine === 'ai' || busy || autoChecking) return;
+  if (!liveStream) return;
+  const now = performance.now();
+  if (readingActive || busy) liveIdleSince = now;             // 읽는 중·인식 중엔 쉬는 시간으로 안 셈
+  // 아직 한 장도 안 읽었으면(책 맞추는 중) 30초까지 기다려 줌
+  else if (now - liveIdleSince > (lastReadIdx >= 0 ? LIVE_IDLE_MS : 30000) && !autoChecking) {
+    log('새 페이지가 없어 카메라 끔');
+    stopLive('⏸ 10초 동안 새 페이지가 없어 카메라를 껐어요. 🎥 카메라 켜기로 다시 켜 주세요.');
+    return;
+  }
+  if (!$autoTurn.checked || engine === 'ai' || busy || autoChecking) return;
   // 지금 페이지를 거의 다 읽었을 때만 (마지막 2문장째부터, 또는 다 읽은 뒤)
   const nearEnd = sentences.length > 0 && lastReadIdx >= sentences.length - 2;
   if (!nearEnd) { autoCandidate = null; autoLastState = ''; return; }
@@ -1251,6 +1264,8 @@ document.getElementById('btnShot').addEventListener('click', () => {
 });
 // 다른 앱에 갔다 오면 iPhone이 카메라를 끄므로, 돌아왔을 때 꺼져 있으면 안내
 document.addEventListener('visibilitychange', () => {
+  // 화면이 꺼지거나 다른 앱으로 가면 카메라를 바로 끔 (뒤에서 계속 돌며 발열·배터리 소모 방지)
+  if (document.visibilityState === 'hidden' && liveStream) { stopLive('카메라를 껐어요. 🎥 카메라 켜기로 다시 켜 주세요.'); return; }
   if (document.visibilityState === 'visible' && liveStream &&
       liveStream.getVideoTracks().every(t => t.readyState === 'ended')) stopLive('카메라가 꺼졌어요. 다시 켜 주세요.');
 });
