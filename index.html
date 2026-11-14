@@ -1030,7 +1030,7 @@ function getOcr() {
       ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
       ort.env.wasm.numThreads = 1;      // GitHub Pages에서는 다중 스레드를 못 씀
       const t0 = performance.now();
-      const mod = await import('./paddle-ocr.js?v=2');
+      const mod = await import('./paddle-ocr.js?v=3');
       const ocr = await mod.createOcr(ort, { onProgress: m => { if (!busy) setOcrStatus(m); } });
       log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
       if (!busy) setOcrStatus('책 페이지를 찍어 주세요.');
@@ -1069,8 +1069,8 @@ async function handleFile(e) {
 }
 
 // 공용: 사진(canvas) 준비 → 글자 인식 → 문장 보기 → (기기 음성·Piper면) 바로 읽기
-async function recognizeAndRead(getCanvas, { showPreview = true, auto = false } = {}) {
-  if (!auto) stopReading(true);   // 자동 넘김일 땐 읽던 마지막 문장을 끊지 않음
+async function recognizeAndRead(getCanvas, { showPreview = true } = {}) {
+  stopReading(true);
   setBusy(true);
   $ocrProgress.removeAttribute('value');   // 진행률 대신 "작업 중" 막대
   try {
@@ -1091,14 +1091,9 @@ async function recognizeAndRead(getCanvas, { showPreview = true, auto = false } 
 
     const text = cleanText(mod.linesToText(r.lines));   // 머리글·쪽번호 제거, 끊긴 줄 합치기
     log(`인식 완료: ${sec}초 (찾기 ${(r.detMs / 1000).toFixed(1)} + 읽기 ${(r.recMs / 1000).toFixed(1)}), ${r.lines.length}줄, ${text.length}자`);
-    if (auto && isSamePage(text, $text.value)) {
-      log('자동 넘김: 같은 페이지라 무시');
-      setOcrStatus('📖 다음 페이지를 기다리는 중…');
-    } else if (!text) {
+    if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
     } else {
-      // 자동 넘김: 아직 마지막 문장을 읽는 중이면 끝날 때까지 기다렸다가 새 페이지로
-      while (auto && readingActive) await new Promise(r => setTimeout(r, 200));
       $text.value = text;
       renderSentences();
       if (engine === 'ai') {
@@ -1184,7 +1179,7 @@ function stopLive(msg) {
 }
 
 // 지금 카메라 화면을 그대로 한 장으로 캡처 (긴 변 2000px로 줄임)
-function grabFrame() {
+function grabFrame(quiet = false) {
   const w = $liveVideo.videoWidth, h = $liveVideo.videoHeight;
   if (!w || !h) throw new Error('카메라 화면이 아직 준비되지 않았어요');
   const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
@@ -1192,72 +1187,60 @@ function grabFrame() {
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
   canvas.getContext('2d').drawImage($liveVideo, 0, 0, canvas.width, canvas.height);
-  autoRef = smallFrame();                // 이 화면이 "지금 페이지" 기준이 됨
-  log(`카메라 캡처: ${w}x${h} → ${canvas.width}x${canvas.height}`);
+  if (!quiet) log(`카메라 캡처: ${w}x${h} → ${canvas.width}x${canvas.height}`);
   return canvas;
 }
 
 // ---------------------------------------------------------------------
 //  페이지 넘김 자동 감지 (카메라 켜져 있고, 지금 페이지를 거의 다 읽었을 때만)
-//   카메라 화면을 아주 작게(48px 폭, 흑백) 줄여 0.25초마다 비교:
-//   ① 마지막으로 찍은 화면과 크게 달라짐(=페이지가 바뀜)  ② 그 상태로 1초 동안 거의 안 움직임(=손이 빠짐)
-//   → 자동으로 찍고 읽기. 찍은 글이 이전 페이지와 같으면 무시.
+//   화면 변화(움직임)로 판단하면 손에 든 폰이 조금만 흔들려도 헷갈림 → 대신 글자를 직접 확인:
+//   약 1초마다 카메라 화면의 글자를 조용히 인식해서, 지금 페이지와 "다른 글"이
+//   두 번 연속 똑같이 보이면(= 페이지가 넘어갔고 넘기는 동작도 끝남) 그 글을 바로 읽기.
 // ---------------------------------------------------------------------
-const AUTO_NEW = 14;        // 마지막 찍은 화면과 이 이상 다르면 "페이지가 바뀜" (0~255 밝기 차이 평균)
-const AUTO_STILL = 4;       // 직전 화면과 이 미만이면 "멈춰 있음"
-const AUTO_STILL_MS = 1000; // 이만큼 멈춰 있어야 찍음
 const $autoTurn = document.getElementById('autoTurn');
 $autoTurn.checked = load('autoTurn') !== '0';
 $autoTurn.addEventListener('change', () => save('autoTurn', $autoTurn.checked ? '1' : '0'));
-const autoCv = document.createElement('canvas');
-let autoRef = null, autoPrev = null, autoStillSince = 0, autoLastLog = 0;
+let autoChecking = false, autoCandidate = null, autoNextAt = 0, autoLastState = '';
 
-function smallFrame() {
-  const vw = $liveVideo.videoWidth, vh = $liveVideo.videoHeight;
-  if (!vw || !vh) return null;
-  const w = 48, h = Math.round(48 * vh / vw);
-  autoCv.width = w; autoCv.height = h;
-  const ctx = autoCv.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage($liveVideo, 0, 0, w, h);
-  const d = ctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
-  let sum = 0;
-  for (let i = 0; i < w * h; i++) { g[i] = 0.3 * d[i * 4] + 0.59 * d[i * 4 + 1] + 0.11 * d[i * 4 + 2]; sum += g[i]; }
-  const mean = sum / (w * h);
-  for (let i = 0; i < g.length; i++) g[i] -= mean;    // 전체 밝기 변화(자동 노출)는 무시
-  return g;
-}
-function frameDiff(a, b) {
-  if (!a || !b || a.length !== b.length) return 999;
-  let s = 0;
-  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
-  return s / a.length;
-}
 function isSamePage(a, b) {
   const x = normText(a).slice(0, 80), y = normText(b).slice(0, 80);
   return x.length > 10 && editDistance(x, y, 10) <= 10;
 }
 
-setInterval(() => {
-  if (!liveStream || !$autoTurn.checked || engine === 'ai' || busy) { autoStillSince = 0; return; }
-  const cur = smallFrame();
-  if (!cur) return;
-  const still = frameDiff(cur, autoPrev) < AUTO_STILL;
-  autoPrev = cur;
-  if (!autoRef) { autoRef = cur; return; }
+setInterval(async () => {
+  if (!liveStream || !$autoTurn.checked || engine === 'ai' || busy || autoChecking) return;
   // 지금 페이지를 거의 다 읽었을 때만 (마지막 2문장째부터, 또는 다 읽은 뒤)
   const nearEnd = sentences.length > 0 && lastReadIdx >= sentences.length - 2;
-  if (!nearEnd) { autoStillSince = 0; return; }
-  const dRef = frameDiff(cur, autoRef);
-  const now = performance.now();
-  if (now - autoLastLog > 3000) { autoLastLog = now; log(`[자동 넘김 감시] 찍은 화면과 차이 ${dRef.toFixed(1)} (기준 ${AUTO_NEW})`); }
-  if (dRef < AUTO_NEW || !still) { autoStillSince = 0; return; }
-  if (!autoStillSince) { autoStillSince = now; return; }
-  if (now - autoStillSince < AUTO_STILL_MS) return;
-  autoStillSince = 0;
-  log(`자동 넘김: 새 페이지 감지 (차이 ${dRef.toFixed(1)}) → 찍고 읽기`);
-  setOcrStatus('📖 새 페이지! 읽는 중…');
-  recognizeAndRead(async () => grabFrame(), { showPreview: false, auto: true });
-}, 250);
+  if (!nearEnd) { autoCandidate = null; autoLastState = ''; return; }
+  if (performance.now() < autoNextAt) return;
+  autoChecking = true;
+  try {
+    const { mod, ocr } = await getOcr();
+    const canvas = grabFrame(true);
+    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    const r = await mod.recognize(ocr, data, { minScore: MIN_SCORE });
+    const text = cleanText(mod.linesToText(r.lines));
+    const isNew = text.length >= 20 && !isSamePage(text, $text.value);
+    const state = !isNew ? (text.length < 20 ? '글자 없음' : '같은 페이지') : (autoCandidate && isSamePage(text, autoCandidate) ? '새 페이지 확인' : '새 페이지 후보');
+    if (state !== autoLastState) { autoLastState = state; log(`[자동 넘김] ${state} (${text.length}자, ${((r.detMs + r.recMs) / 1000).toFixed(1)}초)`); }
+    if (!isNew) { autoCandidate = null; return; }
+    if (!autoCandidate || !isSamePage(text, autoCandidate)) { autoCandidate = text; setOcrStatus('📖 새 페이지 확인 중…'); return; }
+    // 두 번 연속 같은 새 글 → 새 페이지로 확정
+    autoCandidate = null; autoLastState = '';
+    while (readingActive) await new Promise(res => setTimeout(res, 200));   // 마지막 문장은 끝까지 읽고
+    $text.value = text;
+    renderSentences();
+    $preview.style.display = 'none';
+    setOcrStatus('📖 새 페이지 – 읽기 시작');
+    log('자동 넘김: 새 페이지 읽기 시작');
+    speakAll();
+  } catch (e) {
+    log(`[자동 넘김] 오류: ${e.message}`);
+  } finally {
+    autoChecking = false;
+    autoNextAt = performance.now() + 700;
+  }
+}, 300);
 
 $btnLiveOn.addEventListener('click', startLive);
 document.getElementById('btnLiveOff').addEventListener('click', () => { stopLive('책 페이지를 찍어 주세요.'); save('liveCam', '0'); });

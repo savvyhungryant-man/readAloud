@@ -129,25 +129,72 @@ async function readLine({ ort, rec, keys }, img, b) {
     if (best !== 0 && best !== prev) { em.push({ i, ch: keys[best] ?? '' }); sum += bv; }
     prev = best;
   }
-  return { text: restoreDashes(em, T), score: em.length ? sum / em.length : 0 };
+  return { text: fixGaps(em, T, gray(input, H, W), H, W), score: em.length ? sum / em.length : 0 };
 }
 
-// 긴 대시(—) 복원: 이 모델은 긴 대시를 못 읽고 그냥 건너뜀 → "reformers—most"가 "reformersmost"로 붙음.
-// 대신 그 자리에 글자 없는 빈 구간이 생기므로, 글자 사이 간격이 보통(1~3칸)보다 크게(5칸 이상) 벌어졌는데
-// 띄어쓰기도 없으면 그 자리에 "—"를 넣음. 줄 맨 끝/맨 앞의 대시는 양쪽 여백 차이로 판단.
-const GAP = 5;
-const isWordCh = ch => /[A-Za-z0-9,;.'’"”“]/.test(ch);
-function restoreDashes(em, T) {
+// ---------- 빠진 대시(—)·띄어쓰기 되살리기 ----------
+// 이 모델은 긴 대시(—)를 못 읽고 건너뛰고, 글자 간격이 넓은 책에서는 띄어쓰기도 가끔 빠뜨림.
+// 1) 읽힌 글자 사이 간격이 그 줄의 보통 간격보다 크게 벌어진 곳만 후보로 봄
+// 2) 그 빈 곳의 실제 픽셀을 확인: 가운데 높이에 얇은 가로줄만 있으면 "—", 비어 있으면 띄어쓰기
+function gray(input, H, W) {
+  const g = new Float32Array(H * W);
+  for (let i = 0; i < H * W; i++) g[i] = (input[i] + input[H * W + i] + input[2 * H * W + i]) / 3;   // -1(검정) ~ 1(흰색)
+  return g;
+}
+// 빈 곳(x0~x1)을 세로로 훑어서 어떤 모양인지 판단
+function gapShape(g, H, W, x0, x1, ink) {
+  x0 = Math.max(0, Math.round(x0)); x1 = Math.min(W - 1, Math.round(x1));
+  let cols = 0, empty = 0, thinMid = 0;
+  for (let x = x0; x <= x1; x++) {
+    let n = 0, top = H, bot = -1;
+    for (let y = 4; y < H - 4; y++) if (g[y * W + x] < ink) { n++; if (y < top) top = y; if (y > bot) bot = y; }
+    cols++;
+    if (n === 0) empty++;
+    else if (n <= H * 0.12 && bot - top <= H * 0.14 && (top + bot) / 2 > H * 0.33 && (top + bot) / 2 < H * 0.7) thinMid++;
+  }
+  return { cols, empty: empty / Math.max(1, cols), thinMid: thinMid / Math.max(1, cols) };
+}
+// x0~x1 사이에서 글자 잉크가 하나도 없는 세로줄이 가장 길게 이어진 폭 (픽셀)
+function emptyRun(g, H, W, x0, x1, ink) {
+  x0 = Math.max(0, Math.round(x0)); x1 = Math.min(W - 1, Math.round(x1));
+  let best = 0, run = 0;
+  for (let x = x0; x <= x1; x++) {
+    let has = false;
+    for (let y = 4; y < H - 4 && !has; y++) if (g[y * W + x] < ink) has = true;
+    run = has ? 0 : run + 1;
+    if (run > best) best = run;
+  }
+  return best;
+}
+function fixGaps(em, T, g, H, W) {
   if (!em.length) return '';
+  const steps = [];
+  for (let k = 1; k < em.length; k++) if (em[k].ch !== ' ' && em[k - 1].ch !== ' ') steps.push(em[k].i - em[k - 1].i);
+  steps.sort((a, b) => a - b);
+  const typical = steps.length ? steps[Math.floor(steps.length / 2)] : 3;
+  const sorted = Float32Array.from(g).sort();
+  const ink = (sorted[Math.floor(sorted.length * 0.02)] + sorted[Math.floor(sorted.length * 0.6)]) / 2;
+  const px = t => (t + 0.5) * W / T;
+  // 진짜 띄어쓰기 폭 기준: 모델이 읽어낸 띄어쓰기 자리의 빈 폭 중앙값
+  const spaceRuns = [];
+  for (let k = 1; k + 1 < em.length; k++) if (em[k].ch === ' ' && em[k - 1].ch !== ' ' && em[k + 1].ch !== ' ')
+    spaceRuns.push(emptyRun(g, H, W, px(em[k - 1].i), px(em[k + 1].i), ink));
+  spaceRuns.sort((a, b) => a - b);
+  const spaceW = spaceRuns.length ? spaceRuns[Math.floor(spaceRuns.length / 2)] : H * 0.2;
   let text = em[0].ch;
-  const lead = em[0].i, trail = T - 1 - em[em.length - 1].i;
-  if (lead - trail >= GAP && /[A-Za-z]/.test(em[0].ch)) text = '—' + text;
   for (let k = 1; k < em.length; k++) {
     const a = em[k - 1], b = em[k];
-    if (b.i - a.i >= GAP && a.ch !== ' ' && b.ch !== ' ' && isWordCh(a.ch) && isWordCh(b.ch)) text += '—';
+    const gap = b.i - a.i;
+    if (a.ch !== ' ' && b.ch !== ' ' && gap >= 3) {
+      const run = emptyRun(g, H, W, px(a.i), px(b.i), ink);
+      const sh = gap >= typical * 1.7 && gap >= 4
+        ? gapShape(g, H, W, px(a.i) + (px(b.i) - px(a.i)) * 0.3, px(a.i) + (px(b.i) - px(a.i)) * 0.7, ink) : null;
+      if (typeof globalThis.__gapDebug === 'function') globalThis.__gapDebug({ left: text.slice(-8), right: b.ch, gap, typical, run, spaceW, thin: sh ? sh.thinMid : -1 });
+      if (sh && sh.thinMid >= 0.6) text += '—';
+      else if (run >= spaceW * 0.6 && /[A-Za-z0-9.,;:!?'’"”)]/.test(a.ch) && /[A-Za-z0-9"“(]/.test(b.ch)) text += ' ';
+    }
     text += b.ch;
   }
-  if (trail - lead >= GAP && /[A-Za-z]/.test(em[em.length - 1].ch)) text += '—';
   return text;
 }
 
