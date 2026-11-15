@@ -213,9 +213,40 @@ function sample(img, x, y) {
   return r;
 }
 
-// 인식된 줄들 → 글 (들여쓰기로 문단 나눔)
+// 양면(펼친 두 페이지) 나누기:
+//  줄들의 가로 범위를 겹쳐 보고, 가운데쯤에 어떤 줄도 지나가지 않는 빈 세로 띠(책 접힌 곳)가 있으면
+//  왼쪽 페이지 / 오른쪽 페이지로 나눔. 한 페이지만 찍었으면 [모든 줄] 그대로.
+export function splitPages(lines) {
+  if (lines.length < 4) return [lines];
+  const spans = lines.map(l => {
+    const half = Math.abs(Math.cos(l.ang)) * l.w / 2;
+    return [l.cx - half, l.cx + half];
+  }).sort((a, b) => a[0] - b[0]);
+  const minX = spans[0][0], maxX = Math.max(...spans.map(s => s[1])), width = maxX - minX;
+  const hs = lines.map(l => l.h).sort((a, b) => a - b), lineH = hs[Math.floor(hs.length / 2)];
+  // 겹치는 범위를 합쳐서 빈 틈 찾기
+  let best = null, end = spans[0][1];
+  for (const [a, b] of spans.slice(1)) {
+    if (a > end) {
+      const mid = (a + end) / 2, gap = a - end;
+      const inMiddle = mid > minX + width * 0.25 && mid < minX + width * 0.75;
+      if (inMiddle && gap >= lineH * 0.5 && (!best || gap > best.gap)) best = { mid, gap };
+    }
+    end = Math.max(end, b);
+  }
+  if (!best) return [lines];
+  const left = lines.filter(l => l.cx < best.mid), right = lines.filter(l => l.cx >= best.mid);
+  if (left.length < 2 || right.length < 2) return [lines];
+  return [left, right];
+}
+
+// 인식된 줄들 → 글 (들여쓰기로 문단 나눔). 양면이면 왼쪽 페이지 전부 → 오른쪽 페이지 순서
 export function linesToText(lines) {
+  return splitPages(lines).map(pageToText).filter(Boolean).join('\n\n');
+}
+export function pageToText(lines) {
   if (!lines.length) return '';
+  lines = [...lines].sort((a, b) => a.cy - b.cy);
   const lefts = lines.map(l => l.left).sort((a, b) => a - b);
   const baseLeft = lefts[Math.floor(lefts.length / 2)];
   const out = [];

@@ -231,6 +231,9 @@
       <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:16px">
         <input type="checkbox" id="autoTurn" style="width:22px;height:22px"> 페이지 넘기면 자동으로 읽기
       </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:16px">
+        <input type="checkbox" id="twoPage" style="width:22px;height:22px"> 📖 양면(펼친 두 페이지) 한 번에 찍기
+      </label>
     </div>
     <div class="buttons">
       <label class="big-btn camera-btn" id="lblCamera" for="fileCamera">📷 사진 찍기</label>
@@ -1054,7 +1057,7 @@ function getOcr() {
       ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
       ort.env.wasm.numThreads = 1;      // GitHub Pages에서는 다중 스레드를 못 씀
       const t0 = performance.now();
-      const mod = await import('./paddle-ocr.js?v=3');
+      const mod = await import('./paddle-ocr.js?v=4');
       const ocr = await mod.createOcr(ort, { onProgress: m => { if (!busy) setOcrStatus(m); } });
       log(`OCR 엔진 준비 완료 (${((performance.now() - t0) / 1000).toFixed(1)}초)`);
       if (!busy) setOcrStatus('책 페이지를 찍어 주세요.');
@@ -1085,6 +1088,13 @@ function prepareImage(file) {
   });
 }
 
+// 인식된 줄 → 읽을 글. 양면이면 왼쪽 페이지 전부 → 오른쪽 페이지 순서로, 페이지마다 머리글·쪽번호 정리
+function ocrToText(mod, lines, quiet = false) {
+  const pages = mod.splitPages(lines);
+  if (pages.length > 1 && !quiet) log(`양면 인식: 왼쪽 ${pages[0].length}줄 / 오른쪽 ${pages[1].length}줄`);
+  return pages.map(p => cleanText(mod.pageToText(p))).filter(Boolean).join('\n\n');
+}
+
 async function handleFile(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -1113,7 +1123,7 @@ async function recognizeAndRead(getCanvas, { showPreview = true } = {}) {
     const r = await mod.recognize(ocr, data, { minScore: MIN_SCORE });
     const sec = ((r.detMs + r.recMs) / 1000).toFixed(1);
 
-    const text = cleanText(mod.linesToText(r.lines));   // 머리글·쪽번호 제거, 끊긴 줄 합치기
+    const text = ocrToText(mod, r.lines);   // 양면 나누기, 머리글·쪽번호 제거, 끊긴 줄 합치기
     log(`인식 완료: ${sec}초 (찾기 ${(r.detMs / 1000).toFixed(1)} + 읽기 ${(r.recMs / 1000).toFixed(1)}), ${r.lines.length}줄, ${text.length}자`);
     if (!text) {
       setOcrStatus('😢 글자를 찾지 못했어요. 더 밝고 가까이 다시 찍어 주세요.');
@@ -1207,13 +1217,17 @@ function stopLive(msg) {
 // 카메라 영상이 가로로 길면(아이패드 가로 등) 가운데 세로 3:4 부분만 사용
 //  → 책 한 페이지가 화면을 꽉 채워서 글자가 더 크게 찍히고, 옆 페이지·책상 같은 잡동사니가 빠짐
 const $liveFrame = document.getElementById('liveFrame');
+const $twoPage = document.getElementById('twoPage');
+$twoPage.checked = load('twoPage') === '1';
+$twoPage.addEventListener('change', () => { save('twoPage', $twoPage.checked ? '1' : '0'); updateLiveFrame(); });
 function cropRect() {
   const w = $liveVideo.videoWidth, h = $liveVideo.videoHeight;
-  if (w > h) { const cw = Math.round(h * 3 / 4); return { sx: Math.round((w - cw) / 2), sy: 0, sw: cw, sh: h }; }
+  // 양면이면 자르지 않고 가로 화면 전체 사용
+  if (w > h && !$twoPage.checked) { const cw = Math.round(h * 3 / 4); return { sx: Math.round((w - cw) / 2), sy: 0, sw: cw, sh: h }; }
   return { sx: 0, sy: 0, sw: w, sh: h };
 }
 function updateLiveFrame() {
-  const land = $liveVideo.videoWidth > $liveVideo.videoHeight;
+  const land = $liveVideo.videoWidth > $liveVideo.videoHeight && !$twoPage.checked;
   if ($liveFrame.classList.contains('portrait') !== land) {
     $liveFrame.classList.toggle('portrait', land);
     log(`카메라 화면: ${$liveVideo.videoWidth}x${$liveVideo.videoHeight}${land ? ' → 가운데 세로 부분만 사용' : ''}`);
@@ -1275,7 +1289,7 @@ setInterval(async () => {
     const canvas = grabFrame(true);
     const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
     const r = await mod.recognize(ocr, data, { minScore: MIN_SCORE });
-    const text = cleanText(mod.linesToText(r.lines));
+    const text = ocrToText(mod, r.lines, true);
     const isNew = text.length >= 20 && !isSamePage(text, $text.value);
     const state = !isNew ? (text.length < 20 ? '글자 없음' : '같은 페이지') : (autoCandidate && isSamePage(text, autoCandidate) ? '새 페이지 확인' : '새 페이지 후보');
     if (state !== autoLastState) { autoLastState = state; log(`[자동 넘김] ${state} (${text.length}자, ${((r.detMs + r.recMs) / 1000).toFixed(1)}초)`); }
