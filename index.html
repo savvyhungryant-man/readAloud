@@ -878,7 +878,8 @@ function stopAudio() {
 async function audioSpeakList(indices) {
   const isAi = engine === 'ai';
   if (isAi && !$aiPassword.value.trim()) { setStatus('🔑 AI 음성 비밀번호를 먼저 입력하세요'); $aiPassword.focus(); return; }
-  stopReading(true);
+  stopReading(true);                   // 이전 읽기 정리 (이때 "읽는 중" 표시가 꺼지므로 아래에서 다시 켬)
+  readingActive = true;
   const my = session;
   unlockAudio();                       // ← 탭 순간에 바로 실행되어야 함 (await 전에)
   const getUrl   = isAi ? fetchAudio : piperAudio;
