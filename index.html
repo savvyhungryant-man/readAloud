@@ -38,7 +38,8 @@
     }
     .col-right { flex: 1; min-width: 0; }
     #cardCamera { order: -1; }                           /* 왼쪽 맨 위에 카메라 */
-    #liveVideo { max-height: 62vh; }
+    #liveVideo { max-height: 72vh; }
+    #liveFrame.portrait { height: 72vh; }
   }
   h1 { font-size: 24px; margin: 0 0 12px; }
   .card {
@@ -107,6 +108,9 @@
   /* 앱 안 카메라 */
   #liveBox { display: none; margin-bottom: 12px; }
   #liveVideo { width: 100%; max-height: 55vh; object-fit: contain; background: #000; border-radius: 12px; display: block; }
+  /* 카메라가 가로로 들어올 때(아이패드 가로 등): 책 페이지 모양(세로 3:4)으로 가운데만 보여 주고 그 부분만 찍음 */
+  #liveFrame.portrait { aspect-ratio: 3 / 4; height: 55vh; max-width: 100%; margin: 0 auto; }
+  #liveFrame.portrait #liveVideo { width: 100%; height: 100%; max-height: none; object-fit: cover; }
   .shot-btn  { background: var(--primary); }
   .live-btn  { background: #fff; color: var(--camera); border: 2px solid var(--camera); font-size: 18px; padding: 14px 0; margin-bottom: 12px; }
   .live-off  { background: #fff; color: #888; border: 2px solid #bbb; font-size: 16px; flex: 0 0 28%; }
@@ -219,7 +223,7 @@
     <!-- 앱 안 카메라: 미리보기를 띄워 두고 버튼 한 번으로 찍고 바로 읽기 -->
     <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
     <div id="liveBox">
-      <video id="liveVideo" playsinline muted autoplay></video>
+      <div id="liveFrame"><video id="liveVideo" playsinline muted autoplay></video></div>
       <div class="buttons" style="margin-top:10px">
         <button class="big-btn shot-btn" id="btnShot">📸 찍고 읽기</button>
         <button class="big-btn live-off" id="btnLiveOff">끄기</button>
@@ -1200,15 +1204,34 @@ function stopLive(msg) {
 }
 
 // 지금 카메라 화면을 그대로 한 장으로 캡처 (긴 변 2000px로 줄임)
+// 카메라 영상이 가로로 길면(아이패드 가로 등) 가운데 세로 3:4 부분만 사용
+//  → 책 한 페이지가 화면을 꽉 채워서 글자가 더 크게 찍히고, 옆 페이지·책상 같은 잡동사니가 빠짐
+const $liveFrame = document.getElementById('liveFrame');
+function cropRect() {
+  const w = $liveVideo.videoWidth, h = $liveVideo.videoHeight;
+  if (w > h) { const cw = Math.round(h * 3 / 4); return { sx: Math.round((w - cw) / 2), sy: 0, sw: cw, sh: h }; }
+  return { sx: 0, sy: 0, sw: w, sh: h };
+}
+function updateLiveFrame() {
+  const land = $liveVideo.videoWidth > $liveVideo.videoHeight;
+  if ($liveFrame.classList.contains('portrait') !== land) {
+    $liveFrame.classList.toggle('portrait', land);
+    log(`카메라 화면: ${$liveVideo.videoWidth}x${$liveVideo.videoHeight}${land ? ' → 가운데 세로 부분만 사용' : ''}`);
+  }
+}
+$liveVideo.addEventListener('loadedmetadata', updateLiveFrame);
+$liveVideo.addEventListener('resize', updateLiveFrame);   // 기기를 돌리면 영상 크기가 바뀜
+
 function grabFrame(quiet = false) {
   const w = $liveVideo.videoWidth, h = $liveVideo.videoHeight;
   if (!w || !h) throw new Error('카메라 화면이 아직 준비되지 않았어요');
-  const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+  const { sx, sy, sw, sh } = cropRect();
+  const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(w * scale);
-  canvas.height = Math.round(h * scale);
-  canvas.getContext('2d').drawImage($liveVideo, 0, 0, canvas.width, canvas.height);
-  if (!quiet) log(`카메라 캡처: ${w}x${h} → ${canvas.width}x${canvas.height}`);
+  canvas.width = Math.round(sw * scale);
+  canvas.height = Math.round(sh * scale);
+  canvas.getContext('2d').drawImage($liveVideo, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  if (!quiet) log(`카메라 캡처: ${w}x${h} → 사용 ${sw}x${sh} → ${canvas.width}x${canvas.height}`);
   return canvas;
 }
 
