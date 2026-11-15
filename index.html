@@ -109,6 +109,10 @@
   #liveBox { display: none; margin-bottom: 12px; }
   #liveVideo { width: 100%; max-height: 55vh; object-fit: contain; background: #000; border-radius: 12px; display: block; }
   /* 카메라가 가로로 들어올 때(아이패드 가로 등): 책 페이지 모양(세로 3:4)으로 가운데만 보여 주고 그 부분만 찍음 */
+  .lens-row { justify-content: center; gap: 10px; margin-top: 8px; }
+  .lens-btn { min-width: 64px; padding: 8px 14px; font-size: 16px; font-weight: 700; border-radius: 999px;
+              border: 2px solid #bbb; background: #fff; color: #555; touch-action: manipulation; }
+  .lens-btn.on { background: #333; border-color: #333; color: #ffd54f; }
   #liveFrame.portrait { aspect-ratio: 3 / 4; height: 55vh; max-width: 100%; margin: 0 auto; }
   #liveFrame.portrait #liveVideo { width: 100%; height: 100%; max-height: none; object-fit: cover; }
   .shot-btn  { background: var(--primary); }
@@ -224,6 +228,10 @@
     <button class="big-btn live-btn" id="btnLiveOn" style="width:100%">🎥 카메라 켜기 (한 번에 찍고 읽기)</button>
     <div id="liveBox">
       <div id="liveFrame"><video id="liveVideo" playsinline muted autoplay></video></div>
+      <div id="lensRow" class="lens-row" style="display:none">
+        <button id="lensUltra" class="lens-btn">0.5x</button>
+        <button id="lensWide" class="lens-btn">1x</button>
+      </div>
       <div class="buttons" style="margin-top:10px">
         <button class="big-btn shot-btn" id="btnShot">📸 찍고 읽기</button>
         <button class="big-btn live-off" id="btnLiveOff">끄기</button>
@@ -1172,6 +1180,59 @@ const $liveBox   = document.getElementById('liveBox');
 const $btnLiveOn = document.getElementById('btnLiveOn');
 let liveStream = null;
 
+// 렌즈: 'wide' = 기본(1x), 'ultra' = 초광각(0.5x). 초광각은 가까이서 책 전체가 들어와 찍기 편함
+let lensMode = load('lens') === 'ultra' ? 'ultra' : 'wide';
+let ultraDevice = null;       // 초광각 카메라 (있으면)
+let switchingLens = false;
+const $lensRow = document.getElementById('lensRow');
+
+function videoConstraints(mode) {
+  const size = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+  if (mode === 'ultra' && ultraDevice) return { deviceId: { exact: ultraDevice.deviceId }, ...size };
+  return { facingMode: { ideal: 'environment' }, ...size };
+}
+
+async function openStream(mode) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints(mode) });
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = stream;
+  $liveVideo.srcObject = stream;
+  await $liveVideo.play().catch(() => {});
+  const t = stream.getVideoTracks()[0];
+  const st = t.getSettings ? t.getSettings() : {};
+  log(`카메라(${mode === 'ultra' ? '0.5x 초광각' : '1x'}): ${t.label || '?'} ${st.width || '?'}x${st.height || '?'}`);
+  t.addEventListener('ended', () => { if (!switchingLens && liveStream === stream) stopLive('카메라가 꺼졌어요. 다시 켜 주세요.'); });
+}
+
+// 카메라 허용 뒤에야 카메라 이름을 알 수 있음 → 그때 초광각을 찾아 0.5x 버튼 표시
+async function findUltraWide() {
+  try {
+    const vids = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    log('카메라 목록: ' + vids.map(d => d.label || '(이름 없음)').join(', '));
+    ultraDevice = vids.find(d => /ultra ?wide|초광각/i.test(d.label)) || null;
+  } catch (e) { ultraDevice = null; }
+  $lensRow.style.display = ultraDevice ? 'flex' : 'none';
+  updateLensButtons();
+}
+function updateLensButtons() {
+  document.getElementById('lensUltra').classList.toggle('on', lensMode === 'ultra' && !!ultraDevice);
+  document.getElementById('lensWide').classList.toggle('on', !(lensMode === 'ultra' && ultraDevice));
+}
+async function setLens(mode) {
+  if (!liveStream || switchingLens) return;
+  lensMode = mode; save('lens', mode); updateLensButtons();
+  switchingLens = true;
+  try { await openStream(mode); }
+  catch (e) {
+    log(`렌즈 전환 실패: ${e.name} ${e.message}`);
+    setOcrStatus('⚠️ 렌즈를 바꾸지 못했어요. 기본 카메라로 돌아갈게요.');
+    lensMode = 'wide'; updateLensButtons();
+    try { await openStream('wide'); } catch (e2) { stopLive('카메라를 다시 켜 주세요.'); }
+  } finally { switchingLens = false; liveIdleSince = performance.now(); }
+}
+document.getElementById('lensUltra').addEventListener('click', () => setLens('ultra'));
+document.getElementById('lensWide').addEventListener('click', () => setLens('wide'));
+
 async function startLive() {
   primeAutoRead();                       // 버튼 누른 순간 → 소리 허용도 같이 받아 둠
   liveIdleSince = performance.now();
@@ -1182,29 +1243,27 @@ async function startLive() {
   }
   try {
     setOcrStatus('카메라 켜는 중…');
-    liveStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
-    });
-    $liveVideo.srcObject = liveStream;
-    await $liveVideo.play().catch(() => {});
+    switchingLens = true;
+    await openStream(ultraDevice && lensMode === 'ultra' ? 'ultra' : 'wide');
     $liveBox.style.display = 'block';
     $btnLiveOn.style.display = 'none';
     $preview.style.display = 'none';
-    const t = liveStream.getVideoTracks()[0];
-    const st = t.getSettings ? t.getSettings() : {};
-    log(`앱 안 카메라 켬: ${st.width || '?'}x${st.height || '?'}`);
-    t.addEventListener('ended', () => stopLive('카메라가 꺼졌어요. 다시 켜 주세요.'));
     setOcrStatus('책 페이지를 화면에 맞추고 📸 찍고 읽기를 누르세요.');
     save('liveCam', '1');
+    const hadUltra = !!ultraDevice;
+    await findUltraWide();
+    // 지난번에 0.5x로 썼으면 처음 켤 때 바로 초광각으로
+    if (!hadUltra && ultraDevice && lensMode === 'ultra') await openStream('ultra');
   } catch (e) {
+    if (liveStream) liveStream.getTracks().forEach(t => t.stop());
     liveStream = null;
     const why = e.name === 'NotAllowedError' ? '카메라 사용이 허용되지 않았어요. Safari 설정에서 카메라를 허용해 주세요.' : e.message;
     setOcrStatus(`⚠️ ${why}`);
     log(`카메라 오류: ${e.name} ${e.message}`);
+  } finally {
+    switchingLens = false;
   }
 }
-
 function stopLive(msg) {
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
