@@ -3,7 +3,8 @@
 //   OPENAI_API_KEY : OpenAI API 키 (sk-...)
 //   APP_PASSWORD   : 앱에서 입력할 비밀번호
 
-const ALLOWED_ORIGIN = 'https://savvyhungryant-man.github.io';  // 이 주소의 페이지만 호출 허용
+// 이 주소들의 페이지만 호출 허용 (새 주소 plzreadme.pages.dev + 옮기는 동안 옛 GitHub Pages 주소)
+const ALLOWED_ORIGINS = ['https://plzreadme.pages.dev', 'https://savvyhungryant-man.github.io'];
 const MODEL          = 'gpt-4o-mini-tts';
 const MAX_CHARS      = 1000;                                    // 한 번에 읽을 최대 글자 수 (요금 폭탄 방지)
 const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
@@ -23,7 +24,8 @@ const SPEED = { normal: 1.0, slow: 0.85, very_slow: 0.7 };
 
 function cors(origin) {
   return {
-    'Access-Control-Allow-Origin': origin === ALLOWED_ORIGIN ? origin : ALLOWED_ORIGIN,
+    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
+    'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-App-Password',
     'Access-Control-Max-Age': '86400',
@@ -52,7 +54,7 @@ export default {
     if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405, origin);
 
     // ① 허용된 페이지에서 온 요청인지
-    if (origin !== ALLOWED_ORIGIN) return json({ error: 'origin not allowed' }, 403, origin);
+    if (!ALLOWED_ORIGINS.includes(origin)) return json({ error: 'origin not allowed' }, 403, origin);
 
     // ② 비밀번호가 맞는지
     if (!env.APP_PASSWORD || request.headers.get('X-App-Password') !== env.APP_PASSWORD) {

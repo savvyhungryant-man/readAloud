@@ -20,6 +20,7 @@ https://savvyhungryant-man.github.io/readAloud/  (main 브랜치에 push하면 1
   index.html에서 `import('./paddle-ocr.js?v=N')`로 불러옴 → **이 파일을 고치면 index.html과 ocr-test.html의 `?v=` 숫자를 올릴 것** (캐시 때문).
 - `worker/worker.js` – Cloudflare Worker. OpenAI TTS(gpt-4o-mini-tts) 프록시. 비밀값 OPENAI_API_KEY, APP_PASSWORD.
   배포 주소 https://readaloud-tts.smurpot.workers.dev (Cloudflare 대시보드에서 사용자가 직접 배포).
+  허용 주소 목록 `ALLOWED_ORIGINS` (plzreadme.pages.dev, savvyhungryant-man.github.io) — 앱 주소가 바뀌면 여기도 고칠 것.
 - `ocr-test.html`, `tts-test.html` – 엔진 비교용 시험 페이지 (본 앱과 별개).
 
 ## 지금 구조와 결정 이유
@@ -80,4 +81,6 @@ https://savvyhungryant-man.github.io/readAloud/  (main 브랜치에 push하면 1
 
 ## 변경 기록
 최근 것이 위. 한 줄 요약 + 필요하면 이유. (2026-11-17 이전 내용은 위 본문과 git 기록 참고)
+- 2026-11-18: 새 주소 https://plzreadme.pages.dev (Cloudflare Pages, 무료) 로 옮기기 시작. Worker 허용 주소를 목록으로 바꾸고 새 주소 추가
+  (옛 GitHub Pages 주소도 당분간 허용). 주소가 바뀌면 비밀번호·저장된 AI 음성·Piper/OCR 모델은 새 주소에서 처음부터(브라우저 저장소가 주소별).
 - 2026-11-17: CLAUDE.md에 변경 기록 섹션 추가, 주요 변경은 여기에 남기기로 함.
