@@ -1,7 +1,8 @@
 # Read Aloud – 프로젝트 안내 (Claude용)
 
-초등 1학년 아이가 영어책을 찍으면 읽어 주는 웹앱. GitHub Pages로 배포:
-https://savvyhungryant-man.github.io/readAloud/  (main 브랜치에 push하면 1~2분 뒤 반영)
+초등 1학년 아이가 영어책을 찍으면 읽어 주는 웹앱. 배포 (main 브랜치에 push하면 1~2분 뒤 둘 다 반영):
+- **https://plzreadme.pages.dev** – 주 주소. Cloudflare Pages(무료), GitHub `readAloud` 저장소 연결, 빌드 없음.
+- https://savvyhungryant-man.github.io/readAloud/ – 옛 GitHub Pages 주소 (옮기는 동안 유지)
 
 ## 작업 방식 (사용자 선호)
 - 사용자는 금융 IT 종사자. 코드는 설명하면 이해하지만 파이썬 경험은 없음. 대화는 한국어.
@@ -77,10 +78,15 @@ https://savvyhungryant-man.github.io/readAloud/  (main 브랜치에 push하면 1
 - 안드로이드(안 쓰는 폰) Chrome에서 성능 확인 예정 – "인식 완료 N초", "Piper 음성 만듦 N초" 로그로 판단.
 - 홈 화면 앱처럼(전체 화면) 만들기, OCR 모델을 기기 저장소에 보관해 오프라인에서도 빠르게.
 - 앞면 카메라 전환(아이패드를 세워 두고 쓰는 경우).
+- 앱으로 만들기 계획: ① PWA(홈 화면 앱) 먼저 → ② 필요하면 Capacitor로 감싸기(Android는 APK로 가족 배포, iPhone은 TestFlight).
+  네이티브 앱의 큰 장점은 iPhone 프리미엄 음성(Ava 등) 사용 가능. 사용자는 MacBook 보유(Xcode 빌드 가능), 추후 Mac mini 도입 가능성.
+- 카메라 위치 맞추기 어려움 → 오버헤드 거치대 권장함. 초소형 Wi-Fi 카메라는 웹앱에서 직접 못 씀, USB-C iPad + USB 웹캠/실물화상기는 가능성 있음(미확인).
 - 이제 안 쓰는 단축어용 `#t=` 받기와 시험 페이지 정리 여부.
 
 ## 변경 기록
 최근 것이 위. 한 줄 요약 + 필요하면 이유. (2026-11-17 이전 내용은 위 본문과 git 기록 참고)
+- 2026-11-19: Cloudflare Pages 프로젝트 `plzreadme` 생성 완료(대시보드 Create → 맨 아래 "Continue to Pages"로 만들어야 pages.dev 주소가 나옴).
+  새 주소에서 앱 열림 확인. Worker 코드 교체(허용 주소 목록) 대기 중.
 - 2026-11-18: 새 주소 https://plzreadme.pages.dev (Cloudflare Pages, 무료) 로 옮기기 시작. Worker 허용 주소를 목록으로 바꾸고 새 주소 추가
   (옛 GitHub Pages 주소도 당분간 허용). 주소가 바뀌면 비밀번호·저장된 AI 음성·Piper/OCR 모델은 새 주소에서 처음부터(브라우저 저장소가 주소별).
 - 2026-11-17: CLAUDE.md에 변경 기록 섹션 추가, 주요 변경은 여기에 남기기로 함.
