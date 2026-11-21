@@ -1,6 +1,6 @@
 # Read Aloud – 프로젝트 안내 (Claude용)
 
-초등 1학년 아이가 영어책을 찍으면 읽어 주는 웹앱. 배포 (main 브랜치에 push하면 1~2분 뒤 둘 다 반영):
+초등 1학년 아이가 영어책(과 한글책)을 찍으면 읽어 주는 웹앱. 배포 (main 브랜치에 push하면 1~2분 뒤 둘 다 반영):
 - **https://plzreadme.pages.dev** – 주 주소. Cloudflare Pages(무료), GitHub `readAloud` 저장소 연결, 빌드 없음.
 - https://savvyhungryant-man.github.io/readAloud/ – 옛 GitHub Pages 주소 (옮기는 동안 유지)
 
@@ -19,6 +19,7 @@
 - `paddle-ocr.js` – PaddleOCR(PP-OCRv4) 브라우저 구현. OpenCV 없이 순수 JS. 글자 줄 찾기 → 줄마다 기울기 맞춰 잘라 읽기,
   빠진 대시(—)·띄어쓰기 복원(fixGaps), 양면 나누기(splitPages), 줄→글(pageToText/linesToText).
   index.html에서 `import('./paddle-ocr.js?v=N')`로 불러옴 → **이 파일을 고치면 index.html과 ocr-test.html의 `?v=` 숫자를 올릴 것** (캐시 때문).
+- `models/` – 우리 저장소에 둔 모델: PP-OCRv5 한국어 글자 읽기 모델(13MB)과 사전. 출처·라이선스는 models/README.md.
 - `worker/worker.js` – Cloudflare Worker. OpenAI TTS(gpt-4o-mini-tts) 프록시. 비밀값 OPENAI_API_KEY, APP_PASSWORD.
   배포 주소 https://readaloud-tts.smurpot.workers.dev (Cloudflare 대시보드에서 사용자가 직접 배포).
   허용 주소 목록 `ALLOWED_ORIGINS` (plzreadme.pages.dev, savvyhungryant-man.github.io) — 앱 주소가 바뀌면 여기도 고칠 것.
@@ -35,6 +36,16 @@
 - 양면: 줄들의 가로 범위가 가운데에서 끊기면(접힌 곳) 왼쪽 페이지 → 오른쪽 페이지 순서. 페이지마다 cleanText 따로.
 - AI(유료 API)로 인식하는 방식은 사용자가 원하지 않음. iOS 단축어(라이브 텍스트) 연동도 시도했으나 아이가 쓰기 번거로워 PaddleOCR로 감
   (주소 `#t=글` 받기 기능은 그 흔적으로 남아 있음).
+
+### 책 언어: 영어 / 한글 (음성 종류 카드 맨 위 버튼, `bookLang`, 저장됨)
+- 글자 찾기 모델은 공용, **글자 읽기 모델만 언어별로 갈아 끼움** (`paddle-ocr.js`의 `setOcrLang`). 한글: PP-OCRv5 한국어 모델(models/).
+  한국어 사전은 첫 줄이 빈 줄 → 빈 줄을 건너뛰지 않으면 모든 글자가 한 칸씩 밀림("토"→"톟").
+- 한글책 글 정리: 영어 전용 보정(|→I, 외톨이 글자, 하이픈, W단어, 1→I)은 끔. 머리글은 짧은 단어 수 + **보통 줄 길이의 60% 미만**일 때만
+  (본문 첫 줄이 문장 중간에서 끊겨도 지우지 않도록). 줄이 …요/…니다/…했다 등으로 끝났는데 마침표가 빠졌으면 채움.
+- 한글 문장 나누기: 대문자가 없으므로 문장부호 + 공백이면 나눔 ("빨라!"라고 처럼 붙어 있으면 안 나눔).
+- 띄어쓰기 복원(fixGaps)은 한글끼리는 안 함(한국어 모델이 스스로 잘 띄우고, 넓은 글꼴에서 "시 합"처럼 잘못 띄움).
+- `normText`(AI 음성 저장 키·페이지 비교)는 한글을 남겨야 함 — 지우면 한글 문장이 전부 빈 글자로 같은 키가 됨.
+- 음성: 기기 음성은 ko-* 음성 목록(고른 음성은 언어별 저장), Piper는 한국어 음성이 없어 한글책에선 흐리게·선택 불가, AI 음성은 그대로 사용.
 
 ### 글 정리 (index.html 섹션 B `cleanText`)
 - 쪽번호 줄 제거, 페이지 맨 위·아래 2줄 안의 짧은 줄은 머리글로 제거. 단 따옴표로 시작하거나 다음 줄이 소문자로 이어지면 본문으로 봄
@@ -85,6 +96,9 @@
 
 ## 변경 기록
 최근 것이 위. 한 줄 요약 + 필요하면 이유. (2026-11-17 이전 내용은 위 본문과 git 기록 참고)
+- 2026-11-21: **한글책 읽기 추가** – 책 언어 버튼(영어/한글), PP-OCRv5 한국어 인식 모델(models/), 한글용 글 정리·문장 나누기,
+  기기 음성 ko-KR, Piper는 한글책에서 끔, normText가 한글을 지우던 문제 수정. 영어 결과는 바꾸기 전과 동일함을 확인(View Ridge 사진).
+  paddle-ocr.js ?v=6.
 - 2026-11-19: Cloudflare Pages 프로젝트 `plzreadme` 생성 완료(대시보드 Create → 맨 아래 "Continue to Pages"로 만들어야 pages.dev 주소가 나옴).
   새 주소에서 앱 열림 확인. Worker 코드 교체(허용 주소 목록) 대기 중.
 - 2026-11-18: 새 주소 https://plzreadme.pages.dev (Cloudflare Pages, 무료) 로 옮기기 시작. Worker 허용 주소를 목록으로 바꾸고 새 주소 추가

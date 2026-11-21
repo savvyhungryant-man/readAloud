@@ -1,5 +1,5 @@
 // =====================================================================
-//  PaddleOCR (PP-OCRv4) 브라우저용 – 사진 속 글자 인식
+//  PaddleOCR (PP-OCRv4, 한글은 PP-OCRv5 한국어 모델) 브라우저용 – 사진 속 글자 인식
 //   1) 글자 줄 찾기(detection): 사진에서 "글자가 있는 영역" 확률 지도를 만듦
 //   2) 줄마다 잘라내기: 영역 덩어리마다 기울기를 계산해 반듯하게 잘라냄
 //   3) 글자 읽기(recognition): 잘라낸 줄 이미지를 글자로 바꿈
@@ -8,18 +8,44 @@
 
 export const MODEL_BASE = 'https://cdn.jsdelivr.net/npm/@gutenye/ocr-models@1.4.2/assets/';
 
-export async function createOcr(ort, { base = MODEL_BASE, onProgress = () => {} } = {}) {
-  const load = async (name, label) => {
-    onProgress(label);
-    const buf = await (await fetch(base + name)).arrayBuffer();
-    return ort.InferenceSession.create(new Uint8Array(buf));
-  };
-  const det = await load('ch_PP-OCRv4_det_infer.onnx', '글자 찾기 모델 받는 중… (5MB)');
-  const rec = await load('ch_PP-OCRv4_rec_infer.onnx', '글자 읽기 모델 받는 중… (11MB)');
-  onProgress('사전 받는 중…');
-  const dictText = await (await fetch(base + 'ppocr_keys_v1.txt')).text();
-  const keys = ['', ...dictText.split(/\r?\n/).filter((k, i, a) => !(i === a.length - 1 && k === '')), ' '];
-  return { ort, det, rec, keys };
+// 글자 읽기(recognition) 모델은 책 언어마다 다름. 글자 찾기(detection) 모델은 공용.
+//  en: 기존 중국어+영어 모델 (영어책에 잘 맞음)
+//  ko: PP-OCRv5 한국어 모델 (한글 + 영어 + 숫자). 남의 서버 사용량 한도에 기대지 않도록 우리 저장소(models/)에 둠
+const REC_MODELS = {
+  en: { rec: () => MODEL_BASE + 'ch_PP-OCRv4_rec_infer.onnx', dict: () => MODEL_BASE + 'ppocr_keys_v1.txt', size: '11MB' },
+  ko: { rec: () => new URL('./models/korean_PP-OCRv5_mobile_rec_infer.onnx', import.meta.url).href,
+        dict: () => new URL('./models/ppocrv5_korean_dict.txt', import.meta.url).href, size: '13MB' },
+};
+
+async function loadSession(ort, url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`모델을 받지 못했어요 (${res.status})`);
+  return ort.InferenceSession.create(new Uint8Array(await res.arrayBuffer()));
+}
+
+export async function createOcr(ort, { base = MODEL_BASE, lang = 'en', onProgress = () => {} } = {}) {
+  onProgress('글자 찾기 모델 받는 중… (5MB)');
+  const det = await loadSession(ort, base + 'ch_PP-OCRv4_det_infer.onnx');
+  const ocr = { ort, det, recs: {} };
+  await setOcrLang(ocr, lang, onProgress);
+  return ocr;
+}
+
+// 책 언어 바꾸기: 그 언어의 글자 읽기 모델을 (처음 한 번만) 받아서 갈아 끼움
+export async function setOcrLang(ocr, lang, onProgress = () => {}) {
+  const m = REC_MODELS[lang] || REC_MODELS.en;
+  if (!ocr.recs[lang]) {
+    onProgress(`글자 읽기 모델 받는 중… (${m.size})`);
+    const rec = await loadSession(ocr.ort, m.rec());
+    onProgress('사전 받는 중…');
+    const dictText = await (await fetch(m.dict())).text();
+    // 빈 줄은 건너뜀: 한국어 사전은 첫 줄이 비어 있어서, 그대로 쓰면 모든 글자가 한 칸씩 밀려 읽힘 ("토"→"톟")
+    const keys = ['', ...dictText.split(/\r?\n/).filter(k => k !== ''), ' '];
+    ocr.recs[lang] = { rec, keys };
+  }
+  ocr.rec = ocr.recs[lang].rec;
+  ocr.keys = ocr.recs[lang].keys;
+  ocr.lang = lang;
 }
 
 // img = { data: RGBA 바이트, width, height }  (사진, 긴 변 2000px 정도로 줄여서 넣음)
@@ -191,7 +217,9 @@ function fixGaps(em, T, g, H, W) {
         ? gapShape(g, H, W, px(a.i) + (px(b.i) - px(a.i)) * 0.3, px(a.i) + (px(b.i) - px(a.i)) * 0.7, ink) : null;
       if (typeof globalThis.__gapDebug === 'function') globalThis.__gapDebug({ left: text.slice(-8), right: b.ch, gap, typical, run, spaceW, thin: sh ? sh.thinMid : -1 });
       if (sh && sh.thinMid >= 0.6) text += '—';
-      else if (run >= spaceW * 0.6 && /[A-Za-z0-9.,;:!?'’"”)]/.test(a.ch) && /[A-Za-z0-9"“(]/.test(b.ch)) text += ' ';
+      // 한글끼리는 넣지 않음: 한국어 모델은 한글 낱말 사이 띄어쓰기를 스스로 잘 읽고, 글자 간격이 넓은 글꼴에서 "시 합"처럼 잘못 띄움
+      else if (run >= spaceW * 0.6 && /[A-Za-z0-9가-힣.,;:!?'’"”)]/.test(a.ch) && /[A-Za-z0-9가-힣"“(]/.test(b.ch) &&
+               !(/[가-힣]/.test(a.ch) && /[가-힣]/.test(b.ch))) text += ' ';
     }
     text += b.ch;
   }
